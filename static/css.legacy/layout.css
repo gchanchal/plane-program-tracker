@@ -1,0 +1,90 @@
+/* Topbar (brand, breadcrumb, project picker, live pill, theme btn, export buttons)
+   + Tabs + tab panels. */
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0 18px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #F1EFE8;
+}
+
+.breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #6B6862; }
+.breadcrumb strong { color: #1A1916; font-weight: 500; }
+.breadcrumb i { font-size: 14px; }
+
+.brand-mark { display: inline-flex; align-items: center; gap: 7px; text-decoration: none; color: inherit; }
+.brand-mark:hover .brand-text { color: #1A1916; }
+.brand-mark svg { display: block; flex-shrink: 0; }
+.brand-text { font-weight: 500; color: #1A1916; letter-spacing: -0.01em; }
+
+.live-pill-wrap { position: relative; margin-left: auto; }
+.live-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 99px;
+  background: #E8F5E9; color: #2C6B30;
+  font-size: 11px; font-weight: 500;
+  cursor: default;
+}
+.live-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #16A34A; }
+.live-pill-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: #1A1916; color: #FAFAF7;
+  padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; font-family: 'Geist Mono', monospace;
+  white-space: nowrap;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity 0.12s;
+  z-index: 100;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+}
+.live-pill-tip::before {
+  content: ''; position: absolute; bottom: 100%; right: 14px;
+  border: 5px solid transparent; border-bottom-color: #1A1916;
+}
+.live-pill-wrap:hover .live-pill-tip { opacity: 1; visibility: visible; }
+
+.export-btn {
+  padding: 5px 12px; border: 1px solid #D6D3C8; background: #FFFFFF;
+  border-radius: 6px; font-family: inherit; font-size: 12px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+}
+.export-btn:hover { background: #F4F2EC; }
+
+.theme-btn {
+  width: 30px; height: 28px; padding: 0;
+  border: 1px solid #D6D3C8; background: #FFFFFF; border-radius: 6px;
+  font-family: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #1A1916;
+}
+.theme-btn i { font-size: 16px; }
+.theme-btn:hover { background: #F4F2EC; }
+
+/* Tabs */
+.tabs {
+  display: flex; gap: 2px; border-bottom: 1px solid #E8E5DC;
+  margin-bottom: 22px;
+}
+.tab {
+  padding: 10px 16px;
+  background: none; border: none;
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  color: #6B6862; cursor: pointer;
+  border-bottom: 2px solid transparent;
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-bottom: -1px;
+}
+.tab i { font-size: 15px; }
+.tab:hover { color: #1A1916; }
+.tab.active { color: #1A1916; border-bottom-color: #1A1916; }
+.tab-badge {
+  background: #1A1916; color: #FAFAF7;
+  font-size: 10px; padding: 1px 6px; border-radius: 99px;
+  font-family: 'Geist Mono', monospace; min-width: 18px; text-align: center;
+}
+.tab-badge.warn { background: #BA7517; }
+.tab-badge.bad { background: #A32D2D; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }

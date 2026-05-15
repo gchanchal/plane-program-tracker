@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plane · Program dashboard</title>
+    <script>
+      (function () {
+        var pref = localStorage.getItem('dashboard.theme') || 'system';
+        var applied = pref === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : pref;
+        document.documentElement.classList.toggle('dark', applied === 'dark');
+        document.documentElement.dataset.themePref = pref;
+      })();
+    </script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/dist/tabler-icons.min.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

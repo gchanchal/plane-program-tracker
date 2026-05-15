@@ -1,0 +1,211 @@
+/* Dark theme overrides + system-preference variants + print rules.
+   Loaded last so its selectors win over component defaults. */
+
+html[data-theme="dark"] {
+  --bg: #131210;
+  --card: #1E1D1A;
+  --card-soft: #1A1916;
+  --text: #F0EEE8;
+  --text-muted: #A09C92;
+  --text-faint: #6B6862;
+  --border: #2A2924;
+  --border-strong: #3A3933;
+  --border-faint: #232220;
+  --hover: #2A2924;
+  --row-hover: #232220;
+  --group-bg: #232220;
+  --group-bg-hover: #2A2924;
+  --link: #F0EEE8;
+  --kpi-bg: #1E1D1A;
+  --tooltip-bg: #F0EEE8;
+  --tooltip-text: #1A1916;
+  --chart-grid: #2A2924;
+  --chart-axis: #A09C92;
+}
+
+/* Backgrounds ----------------------------------------------------------- */
+html[data-theme="dark"] body { background: #131210; color: #F0EEE8; }
+html[data-theme="dark"] .kpi,
+html[data-theme="dark"] .panel,
+html[data-theme="dark"] .chart-box,
+html[data-theme="dark"] .action-bucket,
+html[data-theme="dark"] .cap-table,
+html[data-theme="dark"] .risk-chip,
+html[data-theme="dark"] .export-btn,
+html[data-theme="dark"] .rule-menu {
+  background: #1E1D1A; border-color: #2A2924; color: #F0EEE8;
+}
+html[data-theme="dark"] .portfolio-card,
+html[data-theme="dark"] .builder,
+html[data-theme="dark"] .stable-header,
+html[data-theme="dark"] .srow-group {
+  background: #232220; border-color: #2A2924;
+}
+html[data-theme="dark"] .cap-row.cap-head { background: #232220; }
+
+/* Border colors --------------------------------------------------------- */
+html[data-theme="dark"] .topbar,
+html[data-theme="dark"] .tabs,
+html[data-theme="dark"] footer,
+html[data-theme="dark"] .panel-header,
+html[data-theme="dark"] .action-bucket-list,
+html[data-theme="dark"] .stable-header,
+html[data-theme="dark"] .cap-row,
+html[data-theme="dark"] .srow,
+html[data-theme="dark"] .action-row,
+html[data-theme="dark"] .builder-head,
+html[data-theme="dark"] .builder,
+html[data-theme="dark"] .builder-row + .builder-row::before { border-color: #2A2924; }
+
+/* Muted text ------------------------------------------------------------ */
+html[data-theme="dark"] .breadcrumb,
+html[data-theme="dark"] .subhead,
+html[data-theme="dark"] .panel-meta,
+html[data-theme="dark"] .kpi-label,
+html[data-theme="dark"] .kpi-sub,
+html[data-theme="dark"] .builder-title,
+html[data-theme="dark"] .action-bucket-desc,
+html[data-theme="dark"] .pc-meta,
+html[data-theme="dark"] .pc-stats,
+html[data-theme="dark"] .tab,
+html[data-theme="dark"] .builder-from,
+html[data-theme="dark"] .cap-bar-label,
+html[data-theme="dark"] .builder-count,
+html[data-theme="dark"] #last-updated,
+html[data-theme="dark"] .stable-header > div,
+html[data-theme="dark"] footer { color: #A09C92; }
+
+/* Primary text ---------------------------------------------------------- */
+html[data-theme="dark"] h1,
+html[data-theme="dark"] .kpi-value,
+html[data-theme="dark"] .kpi-sub strong,
+html[data-theme="dark"] .row-name,
+html[data-theme="dark"] .panel-title,
+html[data-theme="dark"] .tab.active,
+html[data-theme="dark"] .pc-stats strong,
+html[data-theme="dark"] .builder-to,
+html[data-theme="dark"] .builder-scope,
+html[data-theme="dark"] .assignee-name,
+html[data-theme="dark"] .cap-bar-label .pct,
+html[data-theme="dark"] .cap-name .name,
+html[data-theme="dark"] .action-name,
+html[data-theme="dark"] .pc-head h4,
+html[data-theme="dark"] .breadcrumb strong,
+html[data-theme="dark"] .chart-box h3,
+html[data-theme="dark"] .action-bucket-title,
+html[data-theme="dark"] .brand-text { color: #F0EEE8; }
+
+/* Faint text & seq tags ------------------------------------------------- */
+html[data-theme="dark"] .row-seq,
+html[data-theme="dark"] a.row-seq,
+html[data-theme="dark"] a.action-seq,
+html[data-theme="dark"] .action-seq,
+html[data-theme="dark"] .action-meta,
+html[data-theme="dark"] .action-metric { color: #888780; }
+html[data-theme="dark"] a.row-seq:hover,
+html[data-theme="dark"] a.action-seq:hover { color: #F0EEE8; }
+
+/* Hover bg -------------------------------------------------------------- */
+html[data-theme="dark"] .action-row:hover,
+html[data-theme="dark"] .srow:hover,
+html[data-theme="dark"] .cap-row:not(.cap-head):hover,
+html[data-theme="dark"] .action-bucket-head:hover,
+html[data-theme="dark"] .export-btn:hover,
+html[data-theme="dark"] .rule-menu-item:hover,
+html[data-theme="dark"] .add-rule-btn:hover { background: #2A2924; color: #F0EEE8; }
+html[data-theme="dark"] .srow-group:hover { background: #2A2924; }
+html[data-theme="dark"] .brand-mark:hover .brand-text { color: #FFFFFF; }
+html[data-theme="dark"] .risk-chip:hover { border-color: #5A5650; }
+
+/* Project picker -------------------------------------------------------- */
+html[data-theme="dark"] .project-trigger { background: #1E1D1A; border-color: #2A2924; color: #F0EEE8; }
+html[data-theme="dark"] .project-trigger:hover { border-color: #3A3933; }
+html[data-theme="dark"] .project-trigger i { color: #A09C92; }
+html[data-theme="dark"] .project-panel { background: #1E1D1A; border-color: #2A2924; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+html[data-theme="dark"] .project-search-wrap { border-bottom-color: #2A2924; }
+html[data-theme="dark"] .project-search::placeholder { color: #6B6862; }
+html[data-theme="dark"] .project-item { color: #F0EEE8; }
+html[data-theme="dark"] .project-item:hover,
+html[data-theme="dark"] .project-item.active { background: #2A2924; }
+html[data-theme="dark"] .project-item .ident { background: #2A2924; color: #A09C92; }
+html[data-theme="dark"] .project-item.selected .ident { background: #F0EEE8; color: #131210; }
+html[data-theme="dark"] .project-item .check { color: #F0EEE8; }
+
+/* Live pill + tooltip --------------------------------------------------- */
+html[data-theme="dark"] .live-pill-tip { background: #F0EEE8; color: #131210; }
+html[data-theme="dark"] .live-pill-tip::before { border-bottom-color: #F0EEE8; }
+html[data-theme="dark"] .live-pill { background: rgba(22,163,74,0.18); color: #7ED88C; }
+
+/* Builder pills --------------------------------------------------------- */
+html[data-theme="dark"] .builder-num { background: #1E1D1A; border-color: #3A3933; color: #A09C92; }
+html[data-theme="dark"] .builder-row[data-has-rules="true"] .builder-num { background: #F0EEE8; color: #131210; border-color: #F0EEE8; }
+html[data-theme="dark"] .add-rule-btn,
+html[data-theme="dark"] .btn-reset { border-color: #3A3933; color: #A09C92; background: transparent; }
+html[data-theme="dark"] .rule-pill { background: #F0EEE8; color: #131210; }
+html[data-theme="dark"] .rule-pill .pill-x { color: #131210; background: rgba(0,0,0,0.15); }
+html[data-theme="dark"] .rule-pill .pill-order { background: rgba(0,0,0,0.18); }
+html[data-theme="dark"] .indent-guide { border-left-color: #3A3933; }
+
+/* Progress-bar backgrounds --------------------------------------------- */
+html[data-theme="dark"] .pc-progress-bar { background: #2A2924; }
+html[data-theme="dark"] .cap-bar { background: #2A2924; }
+
+/* Action Center help + fix form ---------------------------------------- */
+html[data-theme="dark"] .action-help { background: #2A2520; border-color: #4A3A1A; color: #E5C988; }
+html[data-theme="dark"] .action-help strong { color: #F0EEE8; }
+html[data-theme="dark"] .action-fix-btn { color: #F0EEE8; border-color: #3A3933; }
+html[data-theme="dark"] .action-fix-btn:hover { background: #2A2924; border-color: #6B6862; }
+html[data-theme="dark"] .action-fix-panel { background: #181715; border-bottom-color: #2A2924; border-top-color: #2A2924; }
+html[data-theme="dark"] .action-fix-suggestion { color: #A09C92; }
+html[data-theme="dark"] .action-fix-suggestion strong { color: #F0EEE8; }
+html[data-theme="dark"] .action-fix-controls input,
+html[data-theme="dark"] .action-fix-controls select { background: #1E1D1A; border-color: #3A3933; color: #F0EEE8; }
+html[data-theme="dark"] .action-fix-save { background: #F0EEE8; color: #131210; }
+html[data-theme="dark"] .action-fix-save:hover { background: #FFFFFF; }
+html[data-theme="dark"] .action-fix-msg.err { color: #F08F8F; }
+html[data-theme="dark"] .action-fix-msg.ok  { color: #7ED88C; }
+
+/* Risk strip ------------------------------------------------------------ */
+html[data-theme="dark"] .risk-chip i { color: #A09C92; }
+html[data-theme="dark"] .risk-chip .risk-chip-num { color: #F0EEE8; }
+html[data-theme="dark"] .risk-chip .risk-chip-label { color: #A09C92; }
+html[data-theme="dark"] .risk-chip.bad { border-color: #4A2929; }
+html[data-theme="dark"] .risk-chip.bad i,
+html[data-theme="dark"] .risk-chip.bad .risk-chip-num { color: #FF8B8B; }
+html[data-theme="dark"] .risk-chip.warn { border-color: #4A3A1A; }
+html[data-theme="dark"] .risk-chip.warn i,
+html[data-theme="dark"] .risk-chip.warn .risk-chip-num { color: #FFC57A; }
+
+/* Tab indicator --------------------------------------------------------- */
+html[data-theme="dark"] .tab.active { border-bottom-color: #F0EEE8; }
+
+/* Badges re-tinted for dark backgrounds -------------------------------- */
+html[data-theme="dark"] .b-done       { background: #1F3320; color: #7ED88C; }
+html[data-theme="dark"] .b-inprogress { background: #3A2A0A; color: #F0B870; }
+html[data-theme="dark"] .b-todo       { background: #1A2A3A; color: #82B4E5; }
+html[data-theme="dark"] .b-backlog    { background: #2A2924; color: #A09C92; }
+html[data-theme="dark"] .b-cancelled,
+html[data-theme="dark"] .b-urgent     { background: #3A1F1F; color: #F08F8F; }
+html[data-theme="dark"] .b-high       { background: #3A2A0A; color: #F0B870; }
+html[data-theme="dark"] .b-medium     { background: #1A2A3A; color: #82B4E5; }
+html[data-theme="dark"] .b-low,
+html[data-theme="dark"] .b-none       { background: #2A2924; color: #A09C92; }
+html[data-theme="dark"] .cap-flag.over { background: #3A1F1F; color: #F08F8F; }
+html[data-theme="dark"] .cap-flag.high { background: #3A2A0A; color: #F0B870; }
+html[data-theme="dark"] .cap-flag.ok   { background: #1F3320; color: #7ED88C; }
+html[data-theme="dark"] .cap-flag.idle { background: #2A2924; color: #A09C92; }
+html[data-theme="dark"] .action-bucket-count.empty { background: #2A2924; color: #A09C92; }
+html[data-theme="dark"] .action-bucket-count.low   { background: #1F3320; color: #7ED88C; }
+html[data-theme="dark"] .action-bucket-count.warn  { background: #3A2A0A; color: #F0B870; }
+html[data-theme="dark"] .action-bucket-count.bad   { background: #3A1F1F; color: #F08F8F; }
+
+/* Theme button ---------------------------------------------------------- */
+html[data-theme="dark"] .theme-btn { background: #1E1D1A; border-color: #2A2924; color: #F0EEE8; }
+html[data-theme="dark"] .theme-btn:hover { background: #2A2924; }
+
+/* Print ----------------------------------------------------------------- */
+@media print {
+  body { background: #FFFFFF; color: #1A1916; }
+  .export-btn, .tabs, .risk-strip, .theme-btn { display: none; }
+  .tab-panel { display: block !important; page-break-after: always; }
+}

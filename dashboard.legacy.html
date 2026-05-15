@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Plane · Program dashboard</title>
+
+<!-- Theme init (runs before stylesheets to avoid FOUC) -->
+<script>
+  (function () {
+    var pref = localStorage.getItem('dashboard.theme') || 'system';
+    var applied = pref === 'system'
+      ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+      : pref;
+    document.documentElement.setAttribute('data-theme', applied);
+    document.documentElement.setAttribute('data-theme-pref', pref);
+  })();
+</script>
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<!-- Icon font -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/dist/tabler-icons.min.css">
+
+<!-- App stylesheets (modular, load order matters: base → components → views → theme) -->
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/layout.css">
+<link rel="stylesheet" href="/static/css/components.css">
+<link rel="stylesheet" href="/static/css/views.css">
+<link rel="stylesheet" href="/static/css/theme.css">
+
+<!-- ECharts -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+</head>
+<body>
+<main>
+  <!-- ===== Topbar ===== -->
+  <div class="topbar">
+    <span class="breadcrumb">
+      <a href="https://plane.so" target="_blank" rel="noopener" class="brand-mark" title="plane.so">
+        <svg width="20" height="20" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="32" height="32" rx="7" fill="#3F76FF"/>
+          <path d="M10 8.5L20 16L10 23.5V8.5Z" fill="white"/>
+          <circle cx="23" cy="14.5" r="3" fill="white" fill-opacity="0.9"/>
+        </svg>
+        <span class="brand-text">Plane</span>
+      </a>
+      <i class="ti ti-chevron-right"></i>
+      <span class="project-picker" id="project-picker">
+        <button class="project-trigger" id="project-trigger" disabled type="button">
+          <span class="label" id="project-trigger-label">Loading…</span>
+          <i class="ti ti-chevron-down chev"></i>
+        </button>
+        <div class="project-panel">
+          <div class="project-search-wrap">
+            <i class="ti ti-search"></i>
+            <input class="project-search" id="project-search" type="text" placeholder="Search projects…" autocomplete="off" />
+          </div>
+          <div class="project-list" id="project-list"></div>
+        </div>
+      </span>
+    </span>
+    <span class="live-pill-wrap">
+      <span class="live-pill" id="live-pill">Live</span>
+      <span class="live-pill-tip" id="last-updated"></span>
+    </span>
+    <button class="theme-btn" id="theme-btn" data-action="cycle-theme" type="button" title="Theme"></button>
+    <button class="export-btn" id="refresh-btn" data-action="do-refresh" type="button"><i class="ti ti-refresh"></i><span id="refresh-label">Refresh</span></button>
+    <button class="export-btn" data-action="print" type="button"><i class="ti ti-download"></i>Export</button>
+  </div>
+
+  <p class="subhead" id="subhead" style="margin-top:2px">Loading from local server…</p>
+
+  <!-- ===== Risk strip (always visible above tabs) ===== -->
+  <div class="risk-strip" id="risk-strip"></div>
+
+  <!-- ===== Tab navigation ===== -->
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="pulse"><i class="ti ti-activity-heartbeat"></i>Pulse</button>
+    <button class="tab" data-tab="action"><i class="ti ti-checkbox"></i>Action Center <span class="tab-badge" id="tab-badge-action" style="display:none">0</span></button>
+    <button class="tab" data-tab="capacity"><i class="ti ti-users"></i>Capacity</button>
+    <button class="tab" data-tab="flow"><i class="ti ti-trending-up"></i>Flow</button>
+    <button class="tab" data-tab="explorer"><i class="ti ti-list-tree"></i>Explorer</button>
+  </nav>
+
+  <!-- =============== PULSE =============== -->
+  <div class="tab-panel active" data-tab="pulse">
+    <section class="kpi-grid">
+      <div class="kpi"><div class="kpi-label">Active WIP</div>     <div class="kpi-value" id="kpi-wip">—</div>    <div class="kpi-sub" id="kpi-wip-sub"></div></div>
+      <div class="kpi"><div class="kpi-label">Completed (30d)</div><div class="kpi-value" id="kpi-done30">—</div> <div class="kpi-sub" id="kpi-done30-sub"></div></div>
+      <div class="kpi"><div class="kpi-label">Net flow (30d)</div> <div class="kpi-value" id="kpi-net">—</div>    <div class="kpi-sub" id="kpi-net-sub"></div></div>
+      <div class="kpi"><div class="kpi-label">At risk</div>        <div class="kpi-value" id="kpi-risk">—</div>   <div class="kpi-sub" id="kpi-risk-sub"></div></div>
+    </section>
+    <section class="row-2">
+      <div class="chart-box"><h3>State distribution</h3>     <div class="chart-wrap"><div id="ch-status"   style="width:100%;height:100%"></div></div></div>
+      <div class="chart-box"><h3>By priority</h3>            <div class="chart-wrap"><div id="ch-priority" style="width:100%;height:100%"></div></div></div>
+    </section>
+    <section class="row-2">
+      <div class="chart-box"><h3>By work item type</h3>      <div class="chart-wrap"><div id="ch-type"     style="width:100%;height:100%"></div></div></div>
+      <div class="chart-box"><h3>Items created per week</h3> <div class="chart-wrap"><div id="ch-weekly"   style="width:100%;height:100%"></div></div></div>
+    </section>
+  </div>
+
+  <!-- =============== ACTION CENTER =============== -->
+  <div class="tab-panel" data-tab="action">
+    <div class="action-help">
+      <strong>Heads up.</strong> Aging WIP is approximated from <em>created_at</em> (Plane doesn't expose a clean state-entry time without per-item activity calls). Stale is computed from <em>updated_at</em>, which is exact. Treat aging numbers as a directional signal.
+    </div>
+    <div id="action-buckets"></div>
+  </div>
+
+  <!-- =============== CAPACITY =============== -->
+  <div class="tab-panel" data-tab="capacity">
+    <section class="row-2">
+      <div class="chart-box">
+        <h3>Active load by person <span class="approx">colored by priority</span></h3>
+        <div class="chart-wrap-tall"><div id="ch-cap-load" style="width:100%;height:100%"></div></div>
+      </div>
+      <div class="chart-box">
+        <h3>Completed (30d) by person <span class="approx">approx</span></h3>
+        <div class="chart-wrap-tall"><div id="ch-cap-done" style="width:100%;height:100%"></div></div>
+      </div>
+    </section>
+    <section style="margin-top:6px">
+      <div class="panel-header" style="margin-bottom:12px">
+        <h2 class="panel-title" style="font-size:15px"><i class="ti ti-users"></i>Workload by assignee</h2>
+        <span class="panel-meta">WIP &gt; 5 flagged as overload · Done (30d) approximated via updated_at</span>
+      </div>
+      <div class="cap-table" id="cap-table"></div>
+    </section>
+  </div>
+
+  <!-- =============== FLOW =============== -->
+  <div class="tab-panel" data-tab="flow">
+    <section class="row-2">
+      <div class="chart-box"><h3>Created vs completed (weekly)</h3> <div class="chart-wrap"><div id="ch-flow-throughput" style="width:100%;height:100%"></div></div></div>
+      <div class="chart-box"><h3>Net WIP change (cumulative)</h3>   <div class="chart-wrap"><div id="ch-flow-net"        style="width:100%;height:100%"></div></div></div>
+    </section>
+    <section class="row-2">
+      <div class="chart-box">
+        <h3>Cycle time by type <span class="approx">created → updated, completed only</span></h3>
+        <div class="chart-wrap"><div id="ch-flow-cycle" style="width:100%;height:100%"></div></div>
+      </div>
+      <div class="chart-box">
+        <h3>State mix over refreshes <span class="approx">snapshot history</span></h3>
+        <div class="chart-wrap"><div id="ch-flow-cfd" style="width:100%;height:100%"></div></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- =============== EXPLORER =============== -->
+  <div class="tab-panel" data-tab="explorer">
+    <section>
+      <div class="panel-header" style="margin-bottom:12px">
+        <h2 class="panel-title" style="font-size:15px"><i class="ti ti-eye"></i>Active Feature initiatives</h2>
+        <span class="panel-meta">Top 6 Features by descendant count</span>
+      </div>
+      <div class="portfolio-grid" id="portfolio-grid"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><i class="ti ti-list-tree"></i>Work item hierarchy</h2>
+        <span class="panel-meta" id="h-meta"></span>
+      </div>
+      <div class="builder" id="builder">
+        <div class="builder-head" data-action="toggle-builder">
+          <i class="ti ti-chevron-down builder-toggle"></i>
+          <span class="builder-title">Structure</span>
+          <span class="groupby-meta" id="groupby-meta"></span>
+          <button class="btn-reset" id="reset-btn" data-action="reset-rules" style="display:none"><i class="ti ti-restore"></i>Reset to hierarchy</button>
+        </div>
+        <div class="builder-body">
+          <div class="builder-row" data-level="root">
+            <span class="builder-num">1</span>
+            <span class="builder-scope"><span class="builder-from">Top level</span><i class="ti ti-arrow-narrow-right builder-arrow"></i><span class="builder-to">Root items</span></span>
+            <span class="builder-count" id="lvl-root-count"></span>
+            <div class="builder-rules" id="rules-root"></div>
+          </div>
+          <div class="builder-row" data-level="child">
+            <span class="builder-num">2</span>
+            <span class="builder-scope"><span class="builder-from">Parent</span><i class="ti ti-arrow-narrow-right builder-arrow"></i><span class="builder-to">Children</span></span>
+            <span class="builder-count" id="lvl-child-count"></span>
+            <div class="builder-rules" id="rules-child"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stable-header">
+        <div>Summary</div>
+        <div>Assignee</div>
+        <div>State</div>
+        <div>Priority</div>
+        <div>Type</div>
+      </div>
+      <div id="structure-body"></div>
+    </section>
+  </div>
+
+  <footer id="footer">Local refresh server · /api/data &amp; /api/refresh</footer>
+</main>
+
+<!-- App entry (ES module) -->
+<script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

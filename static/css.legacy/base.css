@@ -1,0 +1,41 @@
+/* CSS variables (light defaults) + base reset + typography.
+   Dark overrides live in theme.css. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #FAFAF7;
+  --card: #FFFFFF;
+  --card-soft: #FAFAF7;
+  --text: #1A1916;
+  --text-muted: #6B6862;
+  --text-faint: #A09C92;
+  --border: #E8E5DC;
+  --border-strong: #D6D3C8;
+  --border-faint: #F1EFE8;
+  --hover: #F4F2EC;
+  --row-hover: #FAFAF7;
+  --group-bg: #F4F2EC;
+  --group-bg-hover: #ECEAE2;
+  --link: #1A1916;
+  --kpi-bg: #FFFFFF;
+  --tooltip-bg: #1A1916;
+  --tooltip-text: #FAFAF7;
+  --chart-grid: #F1EFE8;
+  --chart-axis: #6B6862;
+}
+
+body {
+  font-family: 'Geist', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+main { max-width: 1180px; margin: 0 auto; padding: 20px 24px 60px; }
+a { color: inherit; }
+h1 { font-size: 22px; font-weight: 500; letter-spacing: -0.01em; margin-bottom: 4px; }
+.subhead { color: #6B6862; font-size: 13px; margin-bottom: 16px; }
+
+section { margin-bottom: 22px; }
+footer { margin-top: 40px; padding-top: 18px; border-top: 1px solid #F1EFE8; font-size: 11px; color: #A09C92; text-align: center; }
