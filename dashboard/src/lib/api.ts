@@ -1,6 +1,6 @@
 /** /api/* fetch wrappers. Mirrors static/js/api.js. */
 
-import type { DashboardData, HistorySnapshot, ProjectsResponse } from './types';
+import type { DashboardData, HistorySnapshot, ProjectsResponse, WorkItemComment } from './types';
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init);
@@ -52,6 +52,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_id: projectId, item_id: itemId, comment_html: commentHtml }),
     });
+  },
+
+  async listComments(projectId: string, itemId: string): Promise<WorkItemComment[]> {
+    const body = await jsonFetch<{ comments?: WorkItemComment[] }>(
+      `/api/work-item-comments?project_id=${encodeURIComponent(projectId)}&item_id=${encodeURIComponent(itemId)}`,
+      { cache: 'no-store' },
+    );
+    return body.comments || [];
   },
 
   me(): Promise<{ email: string | null; user_id: string | null; display_name: string | null; auth_enabled: boolean }> {

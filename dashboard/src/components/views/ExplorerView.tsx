@@ -500,7 +500,9 @@ export function ExplorerView() {
           ) : (
             <Rows
               items={roots}
-              generators={generators.root}
+              /* If user only set a Children rule, apply it at the root level too —
+                 setting any grouping rule should produce visible grouping. */
+              generators={generators.root.length > 0 ? generators.root : generators.child}
               genIdx={0}
               depth={0}
               basePath=""
@@ -510,7 +512,7 @@ export function ExplorerView() {
               data={data}
               projectIdent={projectIdent}
               meta={data._meta}
-              childGenerators={generators.child}
+              childGenerators={generators.child.length > 0 ? generators.child : generators.root}
             />
           )}
         </div>

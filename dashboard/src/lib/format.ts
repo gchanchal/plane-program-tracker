@@ -50,3 +50,23 @@ export function countSeverity(n: number, warnAt: number, badAt: number): 'low' |
   if (n >= warnAt) return 'warn';
   return 'low';
 }
+
+/** Human-readable relative time, e.g. "3 mins ago", "2 hrs ago", "yesterday", "5 days ago". */
+export function relativeTime(iso?: string | null, now: Date = new Date()): string {
+  if (!iso) return 'never';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'never';
+  const diffSec = Math.round((now.getTime() - then) / 1000);
+  if (diffSec < 5) return 'just now';
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const m = Math.round(diffSec / 60);
+  if (m < 60) return `${m} min${m === 1 ? '' : 's'} ago`;
+  const h = Math.round(diffSec / 3600);
+  if (h < 24) return `${h} hr${h === 1 ? '' : 's'} ago`;
+  const d = Math.round(diffSec / 86400);
+  if (d === 1) return 'yesterday';
+  if (d < 30) return `${d} days ago`;
+  const mo = Math.round(d / 30);
+  if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
+  return `${Math.round(mo / 12)} yr${Math.round(mo / 12) === 1 ? '' : 's'} ago`;
+}

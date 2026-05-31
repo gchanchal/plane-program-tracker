@@ -1,9 +1,12 @@
-import { Activity, UserCircle2, CheckSquare, CalendarClock, Users, TrendingUp, ListTree } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Activity, UserCircle2, CheckSquare, CalendarClock, Users, TrendingUp, ListTree, Map as MapIcon } from 'lucide-react';
 import { useDashboard } from '@/lib/dashboard-context';
+import { relativeTime } from '@/lib/format';
 import type { TabKey } from '@/lib/use-tab';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
   { key: 'pulse',    label: 'Pulse',         Icon: Activity },
+  { key: 'roadmap',  label: 'Roadmap',       Icon: MapIcon },
   { key: 'mywork',   label: 'My Work',       Icon: UserCircle2 },
   { key: 'action',   label: 'Action Center', Icon: CheckSquare },
   { key: 'due',      label: 'Due Work',      Icon: CalendarClock },
@@ -13,13 +16,21 @@ const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
 ];
 
 export function Tabs({ tab, setTab }: { tab: TabKey; setTab: (t: TabKey) => void }) {
-  const { actions } = useDashboard();
+  const { actions, data } = useDashboard();
   const actionCount = actions
     ? Object.values(actions).reduce((acc, b) => acc + b.items.length, 0)
     : 0;
 
+  // Tick once a minute so "X mins ago" stays current without a server hit.
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => force(n => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const lastIso = data?._meta?.last_refreshed_at;
+
   return (
-    <nav className="flex gap-1 border-b border-border">
+    <nav className="flex items-center gap-1 border-b border-border">
       {TABS.map(t => {
         const active = tab === t.key;
         const showBadge = t.key === 'action' && actionCount > 0;
@@ -49,6 +60,14 @@ export function Tabs({ tab, setTab }: { tab: TabKey; setTab: (t: TabKey) => void
           </button>
         );
       })}
+      {lastIso && (
+        <span
+          className="ml-auto pb-2 text-xs text-muted-foreground whitespace-nowrap"
+          title={`Last refreshed ${new Date(lastIso).toLocaleString()}`}
+        >
+          Last refresh: {relativeTime(lastIso)}
+        </span>
+      )}
     </nav>
   );
 }

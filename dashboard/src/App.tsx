@@ -11,6 +11,7 @@ import { DueWorkView } from '@/components/views/DueWorkView';
 import { CapacityView } from '@/components/views/CapacityView';
 import { FlowView } from '@/components/views/FlowView';
 import { ExplorerView } from '@/components/views/ExplorerView';
+import { RoadmapTimeline } from '@/components/RoadmapTimeline';
 import type { ActionBucketKey } from '@/lib/types';
 import './styles/dashboard.css';
 
@@ -123,6 +124,7 @@ function Inner() {
       <Tabs tab={tab} setTab={setTab} />
       <div className="py-4">
         {data && tab === 'pulse'    && <PulseView onJump={onJump} />}
+        {data && tab === 'roadmap'  && <RoadmapTimeline />}
         {data && tab === 'mywork'   && <MyWorkView onJump={onJump} />}
         {data && tab === 'action'   && <ActionCenterView jumpKey={jumpKey} />}
         {data && tab === 'due'      && <DueWorkView />}

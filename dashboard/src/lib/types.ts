@@ -6,6 +6,12 @@
 export type StateGroup = 'started' | 'unstarted' | 'completed' | 'backlog' | 'cancelled';
 export type Priority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
 
+export interface WorkItemLabel {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 export interface WorkItem {
   id: string;
   seq: number;
@@ -17,12 +23,16 @@ export interface WorkItem {
   priority: Priority;
   assignee?: string;
   assignee_id?: string;
+  assignee_ids?: string[];
   assignee_color?: string;
   parent?: string;
   start?: string;
   end?: string;
   created_at?: string;
   updated_at?: string;
+  labels?: WorkItemLabel[];
+  description_html?: string;
+  description_stripped?: string;
 }
 
 export interface StateGroupInfo {
@@ -60,6 +70,18 @@ export interface StateRecord {
   group: StateGroup;
 }
 
+export interface WorkItemComment {
+  id: string;
+  comment_html?: string;
+  comment_stripped?: string;
+  created_at?: string;
+  updated_at?: string;
+  actor?: string;
+  actor_detail?: { id: string; display_name?: string; first_name?: string; last_name?: string; avatar_url?: string };
+  created_by?: string;
+  created_by_detail?: { id: string; display_name?: string; first_name?: string; last_name?: string; avatar_url?: string };
+}
+
 export interface DataMeta {
   workspace_slug?: string;
   project_id?: string;
@@ -79,6 +101,7 @@ export interface DashboardData {
   type_counts: Record<string, number>;
   state_group_info: Record<StateGroup, StateGroupInfo>;
   states_list?: StateRecord[];
+  labels_list?: WorkItemLabel[];
   weeks: Array<{ week: string; count: number }>;
   portfolios?: Portfolio[];
   kpi: { total: number };

@@ -54,7 +54,7 @@ ALLOWED_EMAIL_DOMAINS = tuple(
     if d.strip()
 )
 SESSION_SECRET = os.environ.get('SESSION_SECRET', '').strip()
-SESSION_TTL_SECONDS = int(os.environ.get('SESSION_TTL_SECONDS', 43200))
+SESSION_TTL_SECONDS = int(os.environ.get('SESSION_TTL_SECONDS', 604800))  # 7 days
 SESSION_COOKIE = 'pt_session'
 
 
@@ -278,6 +278,24 @@ def fetch_types(project_id: str, api_key: str = None):
     return {}
 
 
+def fetch_labels(project_id: str, api_key: str = None):
+    """Fetch project labels; returns {label_id: {name, color}}."""
+    try:
+        path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/labels/'
+        result = plane_get(path, api_key=api_key)
+        items = result if isinstance(result, list) else result.get('results') or []
+        out = {}
+        for l in items:
+            lid = l.get('id')
+            if not lid:
+                continue
+            out[lid] = {'name': l.get('name', '') or 'Unnamed', 'color': l.get('color') or '#888780'}
+        return out
+    except Exception as e:
+        print(f'  ! could not load labels for {project_id} ({e}).', file=sys.stderr)
+        return {}
+
+
 def _looks_like_id(s):
     """True if string looks like a raw UUID (with or without dashes) or '<uuid>-intake'."""
     if not s or not isinstance(s, str):
@@ -319,12 +337,13 @@ def fetch_members(api_key: str = None):
         return {}
 
 
-def aggregate(items, users, states=None, types=None):
+def aggregate(items, users, states=None, types=None, labels=None):
     """Transform raw Plane items into the dashboard data shape."""
     today = datetime.now(timezone.utc).date()
     cutoff = (today - timedelta(days=WINDOW_DAYS)).isoformat()
 
     user_colors = {uid: PALETTE[i % len(PALETTE)] for i, uid in enumerate(sorted(users.keys()))}
+    labels = labels or {}
 
     def state_info(sid):
         if states and sid in states:
@@ -335,6 +354,20 @@ def aggregate(items, users, states=None, types=None):
         if types and tid in types:
             return types[tid]
         return TYPES.get(tid, {'name':'Other','color':'#888780'})
+
+    def expand_labels(raw):
+        out = []
+        for lid in (raw or []):
+            if isinstance(lid, dict):
+                lid = lid.get('id')
+            if not lid:
+                continue
+            info = labels.get(lid)
+            if info:
+                out.append({'id': lid, 'name': info['name'], 'color': info['color']})
+            else:
+                out.append({'id': lid, 'name': lid[:8], 'color': '#888780'})
+        return out
 
     in_window_ids = {i['id'] for i in items}
     items_by_id = {i['id']: i for i in items}
@@ -356,10 +389,10 @@ def aggregate(items, users, states=None, types=None):
         si = state_info(i.get('state'))
         ti = type_info(i.get('type_id') or i.get('type'))
         ass = (i.get('assignees') or [])
-        pa = ass[0] if ass else None
         # assignees may be uuid strings OR dicts depending on `expand`
-        if isinstance(pa, dict):
-            pa = pa.get('id')
+        assignee_ids = [a.get('id') if isinstance(a, dict) else a for a in ass]
+        assignee_ids = [a for a in assignee_ids if a]
+        pa = assignee_ids[0] if assignee_ids else None
         slim.append({
             'id': i['id'],
             'seq': i.get('sequence_id'),
@@ -374,10 +407,14 @@ def aggregate(items, users, states=None, types=None):
             'assignee': users.get(pa) if pa else None,
             'assignee_color': user_colors.get(pa) if pa else None,
             'assignee_id': pa,
+            'assignee_ids': assignee_ids,
             'start': i.get('start_date'),
             'end': i.get('target_date'),
             'created_at': i.get('created_at'),
             'updated_at': i.get('updated_at'),
+            'labels': expand_labels(i.get('labels')),
+            'description_html': i.get('description_html') or '',
+            'description_stripped': i.get('description_stripped') or '',
         })
 
     total = len(items)
@@ -438,6 +475,7 @@ def aggregate(items, users, states=None, types=None):
         })
 
     states_list = [{'id': sid, **info} for sid, info in (states or {}).items()] if states else []
+    labels_list = [{'id': lid, **info} for lid, info in (labels or {}).items()]
     return {
         'items': slim,
         'kpi': {'total': total, 'pct_done': pct_done, 'done': done, 'in_progress': in_progress,
@@ -453,6 +491,7 @@ def aggregate(items, users, states=None, types=None):
         'users': users,
         'user_colors': user_colors,
         'states_list': states_list,
+        'labels_list': labels_list,
     }
 
 
@@ -461,14 +500,15 @@ def do_refresh(project_id: str, api_key: str = None):
     print('  Fetching workspace members...', file=sys.stderr)
     users = fetch_members(api_key=api_key)
     print(f'  Got {len(users)} members.', file=sys.stderr)
-    print(f'  Fetching project states + types for {project_id}...', file=sys.stderr)
+    print(f'  Fetching project states + types + labels for {project_id}...', file=sys.stderr)
     states = fetch_states(project_id, api_key=api_key)
     types = fetch_types(project_id, api_key=api_key)
-    print(f'  Got {len(states)} states, {len(types)} work item types.', file=sys.stderr)
+    labels = fetch_labels(project_id, api_key=api_key)
+    print(f'  Got {len(states)} states, {len(types)} work item types, {len(labels)} labels.', file=sys.stderr)
     print(f'  Fetching work items for {project_id} (last {WINDOW_DAYS} days)...', file=sys.stderr)
     items = fetch_work_items(project_id, api_key=api_key)
     print(f'  Got {len(items)} items in window.', file=sys.stderr)
-    data = aggregate(items, users, states, types)
+    data = aggregate(items, users, states, types, labels)
     data['_meta'] = {
         'last_refreshed_at': datetime.now(timezone.utc).isoformat(),
         'item_count': len(items),
@@ -585,6 +625,11 @@ def _email_allowed(email: str) -> bool:
 
 def _cookie_header(name: str, value: str, max_age: int, http_only: bool = True) -> str:
     parts = [f'{name}={value}', f'Max-Age={max_age}', 'Path=/', 'SameSite=Lax']
+    # Some browsers prefer Expires over Max-Age for persistent cookies; include both
+    # so the cookie survives browser restarts even when privacy settings ignore Max-Age.
+    if max_age > 0:
+        expires_dt = datetime.utcnow() + timedelta(seconds=max_age)
+        parts.append('Expires=' + expires_dt.strftime('%a, %d %b %Y %H:%M:%S GMT'))
     if http_only:
         parts.append('HttpOnly')
     return '; '.join(parts)
@@ -693,12 +738,23 @@ def render_login_page(error: str = None) -> bytes:
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Optional Set-Cookie header to attach to the next response. Set by
+    # _require_auth when a valid session is found, to roll the cookie's expiry
+    # forward (sliding session). Read by _send_* helpers, then cleared.
+    _renew_cookie: str = ''
+
+    def _emit_renew_cookie(self):
+        if self._renew_cookie:
+            self.send_header('Set-Cookie', self._renew_cookie)
+            self._renew_cookie = ''
+
     def _send_json(self, payload, status=200):
         body = json.dumps(payload, default=str).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(body)))
+        self._emit_renew_cookie()
         self.end_headers()
         self.wfile.write(body)
 
@@ -711,6 +767,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', content_type)
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(body)))
+        self._emit_renew_cookie()
         self.end_headers()
         self.wfile.write(body)
 
@@ -729,8 +786,13 @@ class Handler(BaseHTTPRequestHandler):
         """
         if not auth_enabled():
             return ('__noauth__', PLANE_API_KEY)
-        email, pat, _user_id, _name = _session(self)
+        email, pat, user_id, name = _session(self)
         if email and pat and _email_allowed(email):
+            # Sliding session: refresh cookie expiry on every authenticated
+            # request so active users never get bumped to /login. Cookie is
+            # attached automatically by _send_* helpers.
+            fresh = make_session_token(email, pat, user_id, name)
+            self._renew_cookie = _cookie_header(SESSION_COOKIE, fresh, max_age=SESSION_TTL_SECONDS)
             return (email, pat)
         if path.startswith('/api/'):
             self._send_json({'error': 'unauthenticated'}, 401)
@@ -745,6 +807,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         for c in (set_cookies or []):
             self.send_header('Set-Cookie', c)
+        self._emit_renew_cookie()
         self.end_headers()
         self.wfile.write(body)
 
@@ -818,6 +881,29 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/data':
             p = data_path_for(pid)
             if p.exists():
+                # Auto-invalidate caches written before the labels feature.
+                # The `labels_list` key was added when fetch_labels landed; its
+                # absence means the JSON predates the schema. Return 404 so the
+                # frontend's cache-miss path auto-pulls fresh data with labels.
+                try:
+                    raw = p.read_bytes()
+                except OSError:
+                    raw = b''
+                if raw and b'"labels_list"' not in raw:
+                    self._send_json({
+                        'error': 'cache predates labels schema; refresh required',
+                        'project_id': pid,
+                        'state': _refresh_state,
+                    }, 404)
+                    return
+                if raw:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('Content-Length', str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
                 self._send_file(p, 'application/json')
             else:
                 self._send_json({'error': 'no cached data; click Refresh', 'project_id': pid, 'state': _refresh_state}, 404)
@@ -832,6 +918,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/status':
             self._send_json(_refresh_state)
+            return
+        if path == '/api/work-item-comments':
+            qs = urllib.parse.parse_qs(parsed.query)
+            item_id = (qs.get('item_id') or [''])[0]
+            project_id = pid or PLANE_PROJECT_ID
+            if not item_id:
+                self._send_json({'error': 'item_id is required'}, 400)
+                return
+            api_path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/work-items/{item_id}/comments/'
+            try:
+                result = plane_get(api_path, api_key=api_key)
+                rows = result.get('results') if isinstance(result, dict) else result
+                self._send_json({'comments': rows or []})
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
             return
         self.send_error(404)
 
@@ -905,7 +1006,13 @@ class Handler(BaseHTTPRequestHandler):
             if not item_id:
                 self._send_json({'error': 'item_id required'}, 400)
                 return
-            patch = {k: v for k, v in patch_in.items() if v not in ('', [])}
+            # Strip empty strings, but keep empty arrays for fields like
+            # assignee_ids where [] is the only way to clear all assignees.
+            ARRAY_CLEARABLE = {'assignee_ids', 'label_ids'}
+            patch = {
+                k: v for k, v in patch_in.items()
+                if v != '' and (v != [] or k in ARRAY_CLEARABLE)
+            }
             if not patch:
                 self._send_json({'error': 'empty patch'}, 400)
                 return

@@ -3,7 +3,8 @@ import { ArrowUp, ArrowDown, Minus, Activity } from 'lucide-react';
 import { useDashboard } from '@/lib/dashboard-context';
 import { PRIORITY_INFO, TYPE_COLORS } from '@/lib/constants';
 import { isoWeekStart, thirtyDaysAgoIso } from '@/lib/format';
-import type { ActionBucketKey, Priority, StateGroup } from '@/lib/types';
+import type { ActionBucketKey, Priority, StateGroup, WorkItem } from '@/lib/types';
+import { WorkItemListModal } from '@/components/WorkItemListModal';
 import { AreaChart } from '@/components/charts/area-chart';
 import { Area } from '@/components/charts/area';
 import { BarChart } from '@/components/charts/bar-chart';
@@ -57,9 +58,19 @@ function classifyStability(stddev: number, mean: number): VelocityStats['stabili
 const G_ORDER: StateGroup[] = ['completed', 'started', 'unstarted', 'backlog', 'cancelled'];
 const P_ORDER: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
+type DrillKey = 'wip' | 'completed' | 'created' | 'risk';
+
+interface Drill {
+  key: DrillKey;
+  title: string;
+  subtitle?: string;
+  items: WorkItem[];
+}
+
 export function PulseView({ onJump }: { onJump: (k: ActionBucketKey) => void }) {
-  const { data, actions } = useDashboard();
+  const { data, actions, currentProject } = useDashboard();
   const [velocityView, setVelocityView] = useState<VelocityView>('week');
+  const [drill, setDrill] = useState<Drill | null>(null);
   if (!data) return <div className="text-sm text-muted-foreground p-4">No data.</div>;
 
   const items = data.items;
@@ -233,20 +244,59 @@ export function PulseView({ onJump }: { onJump: (k: ActionBucketKey) => void }) 
     }));
   }, [data]);
 
+  // Item lists behind each KPI (built lazily so non-clicked metrics aren't computed).
+  const openDrill = (key: DrillKey) => {
+    let next: Drill;
+    if (key === 'wip') {
+      next = {
+        key,
+        title: 'Active WIP',
+        subtitle: 'state group = Started',
+        items: items.filter(i => i.state_group === 'started'),
+      };
+    } else if (key === 'completed') {
+      next = {
+        key,
+        title: 'Completed (last 30 days)',
+        subtitle: `completed since ${since}`,
+        items: items.filter(i => i.state_group === 'completed' && (i.updated_at || '').slice(0, 10) >= since),
+      };
+    } else if (key === 'created') {
+      next = {
+        key,
+        title: 'Created (last 30 days)',
+        subtitle: `created since ${since}`,
+        items: items.filter(i => (i.created_at || '').slice(0, 10) >= since),
+      };
+    } else {
+      const pastDue = actions?.past_due.items || [];
+      const aging = actions?.aging_wip.items || [];
+      const seen = new Set<string>();
+      const combined = [...pastDue, ...aging].filter(i => seen.has(i.id) ? false : (seen.add(i.id), true));
+      next = {
+        key,
+        title: 'At risk',
+        subtitle: `${pastDue.length} past due · ${aging.length} aging WIP`,
+        items: combined,
+      };
+    }
+    setDrill(next);
+  };
+
   return (
     <div className="space-y-3">
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="kpi kpi-warm">
+        <button type="button" onClick={() => openDrill('wip')} className="kpi kpi-warm kpi-clickable text-left">
           <div className="kpi-label"><span className="kpi-dot" />Active WIP</div>
           <div className="kpi-value">{wip}</div>
           <div className="kpi-sub"><strong>{unstarted}</strong> waiting to start</div>
-        </div>
-        <div className="kpi kpi-good">
+        </button>
+        <button type="button" onClick={() => openDrill('completed')} className="kpi kpi-good kpi-clickable text-left">
           <div className="kpi-label"><span className="kpi-dot" />Completed (30d)</div>
           <div className="kpi-value">{done30}</div>
           <div className="kpi-sub">in the last 30 days</div>
-        </div>
-        <div className={'kpi ' + (net > 0 ? 'kpi-bad' : net < 0 ? 'kpi-good' : 'kpi-cool')}>
+        </button>
+        <button type="button" onClick={() => openDrill('created')} className={'kpi kpi-clickable text-left ' + (net > 0 ? 'kpi-bad' : net < 0 ? 'kpi-good' : 'kpi-cool')}>
           <div className="kpi-label"><span className="kpi-dot" />Net flow (30d)</div>
           <div className="kpi-value">{net > 0 ? '+' : ''}{net}</div>
           <div className="kpi-sub">
@@ -254,13 +304,23 @@ export function PulseView({ onJump }: { onJump: (k: ActionBucketKey) => void }) 
             {net !== 0 && ' · '}
             <strong>{created30}</strong> created · <strong>{done30}</strong> done
           </div>
-        </div>
-        <div className={'kpi ' + (risk > 0 ? 'kpi-bad' : 'kpi-good')}>
+        </button>
+        <button type="button" onClick={() => openDrill('risk')} className={'kpi kpi-clickable text-left ' + (risk > 0 ? 'kpi-bad' : 'kpi-good')}>
           <div className="kpi-label"><span className="kpi-dot" />At risk</div>
           <div className="kpi-value">{risk}</div>
           <div className="kpi-sub"><strong>{pastDueCount}</strong> past due · <strong>{agingCount}</strong> aging</div>
-        </div>
+        </button>
       </section>
+
+      <WorkItemListModal
+        open={drill !== null}
+        onClose={() => setDrill(null)}
+        title={drill?.title || ''}
+        subtitle={drill?.subtitle}
+        items={drill?.items || []}
+        currentProject={currentProject}
+        meta={data._meta}
+      />
 
       <RiskStrip onJump={onJump} />
 

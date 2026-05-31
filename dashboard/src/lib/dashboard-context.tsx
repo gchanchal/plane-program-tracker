@@ -88,13 +88,26 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
-  // Load data + history whenever currentProjectId changes.
+  // Load cached data + history when currentProjectId changes.
+  //
+  // Two cases:
+  //  1. /api/data returns a cached JSON → use it as-is. No Plane API hit.
+  //     This covers page reloads, tab switches, returning to a project we've
+  //     already pulled.
+  //  2. /api/data returns 404 (no cache yet for this project) → auto-fetch
+  //     from Plane this *one* time. First-time projects shouldn't make the
+  //     user click an empty Refresh button to see anything.
+  //
+  // Beyond that, refreshes from Plane only happen when the user clicks the
+  // Refresh button (the `refresh` callback below).
   useEffect(() => {
     if (!currentProjectId) return;
     inflightId.current = currentProjectId;
     (async () => {
       setStatus('loading');
       setErrorMsg(null);
+      setRawData(null);
+      setHistory([]);
       try {
         const d = await api.data(currentProjectId);
         if (inflightId.current !== currentProjectId) return;
@@ -104,7 +117,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         setHistory(h);
         setStatus('ready');
       } catch {
-        // No cache yet — auto-fetch from Plane.
+        // Cache miss — first encounter with this project. Pull from Plane.
         setStatus('fetching');
         try {
           await api.refresh(currentProjectId);

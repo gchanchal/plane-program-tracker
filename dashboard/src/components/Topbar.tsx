@@ -8,8 +8,9 @@ import { api } from '@/lib/api';
 export function Topbar() {
   const { status, refresh, refreshing, data } = useDashboard();
   const fetching = status === 'fetching';
-  const lastUpdated = data?._meta?.last_refreshed_at
-    ? `Last updated ${new Date(data._meta.last_refreshed_at).toLocaleString()}`
+  const lastIso = data?._meta?.last_refreshed_at;
+  const fullDate = lastIso
+    ? `Last refreshed ${new Date(lastIso).toLocaleString()}`
     : 'No refresh yet';
 
   const [email, setEmail] = useState<string | null>(null);
@@ -45,7 +46,7 @@ export function Topbar() {
       </span>
 
       <span className="flex items-center ml-auto">
-        <span className={'live-pill' + (fetching ? ' fetching' : '')} title={lastUpdated}>
+        <span className={'live-pill' + (fetching ? ' fetching' : '')} title={fullDate}>
           {fetching ? 'Fetching' : 'Live'}
         </span>
       </span>

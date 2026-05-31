@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
 import { STORAGE_KEYS } from './constants';
 
-export type TabKey = 'pulse' | 'mywork' | 'action' | 'due' | 'capacity' | 'flow' | 'explorer';
+export type TabKey = 'pulse' | 'roadmap' | 'mywork' | 'action' | 'due' | 'capacity' | 'flow' | 'explorer';
 
-const VALID: TabKey[] = ['pulse', 'mywork', 'action', 'due', 'capacity', 'flow', 'explorer'];
+const VALID: TabKey[] = ['pulse', 'roadmap', 'mywork', 'action', 'due', 'capacity', 'flow', 'explorer'];
 
 function readTab(): TabKey {
   try {
