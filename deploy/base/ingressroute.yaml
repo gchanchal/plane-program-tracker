@@ -1,0 +1,18 @@
+# Traefik IngressRoute (this cluster's Traefik watches the CRD provider, not
+# standard Ingress). Mirrors the existing plane-ingress-route pattern.
+# TLS secret plane-tracker-tls is produced by certificate.yaml (cert-manager).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: plane-tracker
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`plane-tracker.plane.tools`) && PathPrefix(`/`)
+      services:
+        - name: plane-tracker
+          port: 80
+  tls:
+    secretName: plane-tracker-tls

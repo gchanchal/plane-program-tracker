@@ -14,7 +14,8 @@ resources:
   - configmap.yaml
   - deployment.yaml
   - service.yaml
-  - ingress.yaml
+  - certificate.yaml
+  - ingressroute.yaml
 
 commonLabels:
   app.kubernetes.io/name: plane-tracker
