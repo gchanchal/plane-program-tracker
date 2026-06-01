@@ -809,6 +809,16 @@ function RoadmapRow({
   const daysOverdue = isOverdue
     ? Math.max(0, Math.round((toUtcMidnight(today) - toUtcMidnight(end!)) / DAY_MS))
     : 0;
+  // Plain-language reason for the ⚠ flag, shown in a hover tooltip so the user
+  // knows exactly why it's there.
+  const overdueReason = isOverdue
+    ? {
+        title: `Overdue by ${daysOverdue} day${daysOverdue === 1 ? '' : 's'}`,
+        detail: `The target date (${fmtDayMonth(end!)}) has passed, but this work item is still “${item.state}”. Move the target date out or progress the work to clear the flag.`,
+      }
+    : null;
+  // Anchor (viewport coords) for the overdue tooltip while hovered; null = hidden.
+  const [overdueTip, setOverdueTip] = useState<{ x: number; y: number } | null>(null);
 
   const assigneeId = item.assignee_id;
   const assigneeName = assigneeId ? (users[assigneeId] || item.assignee || '') : '';
@@ -1043,12 +1053,26 @@ function RoadmapRow({
           )}
           <span
             className={'roadmap-overdue-wrap' + (isOverdue ? '' : ' roadmap-overdue-hidden')}
-            title={isOverdue ? `Overdue by ${daysOverdue} day${daysOverdue === 1 ? '' : 's'} · still ${item.state_group}` : ''}
-            aria-label={isOverdue ? `Overdue by ${daysOverdue} day${daysOverdue === 1 ? '' : 's'}` : ''}
+            aria-label={overdueReason ? `${overdueReason.title}. ${overdueReason.detail}` : ''}
             aria-hidden={isOverdue ? undefined : true}
+            onMouseEnter={isOverdue ? (e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setOverdueTip({ x: r.right, y: r.bottom + 6 });
+            } : undefined}
+            onMouseLeave={isOverdue ? () => setOverdueTip(null) : undefined}
           >
             <AlertTriangle className="roadmap-overdue-icon" />
           </span>
+          {isOverdue && overdueTip && overdueReason && createPortal(
+            <div className="roadmap-overdue-tip" style={{ left: overdueTip.x, top: overdueTip.y }} role="tooltip">
+              <div className="roadmap-overdue-tip-title">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {overdueReason.title}
+              </div>
+              <div className="roadmap-overdue-tip-detail">{overdueReason.detail}</div>
+            </div>,
+            document.body,
+          )}
         </span>
       </div>
       <div className="roadmap-track">

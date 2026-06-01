@@ -744,6 +744,34 @@ button.kpi { font: inherit; color: inherit; width: 100%; cursor: pointer; }
   color: #FF4D4D;
   filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.45));
 }
+/* Hover tooltip explaining the ⚠ flag. Rendered via a portal to document.body
+   (position: fixed) so the row's overflow:hidden can't clip it. */
+.roadmap-overdue-tip {
+  position: fixed;
+  transform: translateX(-100%);
+  z-index: 60;
+  max-width: 300px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+.roadmap-overdue-tip-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #E5484D;
+}
+.roadmap-overdue-tip-detail {
+  margin-top: 4px;
+  color: var(--muted-foreground);
+}
 .roadmap-meta-id {
   display: inline-flex;
   align-items: center;
