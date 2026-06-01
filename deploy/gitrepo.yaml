@@ -1,17 +1,25 @@
-# Register this repo with Fleet. Apply to the Rancher/Fleet management cluster:
+# Register this repo with Fleet. Apply on the Rancher/Fleet management cluster:
 #   kubectl apply -f deploy/gitrepo.yaml
-# Namespace: fleet-default targets downstream clusters; fleet-local = local cluster.
+#
+# Matches the live GitRepo: fleet-default workspace, SSH repo, targeting the
+# downstream cluster c-vg5tc (display name "plane"). targetNamespace pins all
+# resources into plane-tracker (and forbids cluster-scoped objects in the bundle).
+#
+# clientSecretName references the SSH auth secret holding the deploy key /
+# known_hosts (created by the Fleet UI as auth-7hp6w). Keep it out of git.
 apiVersion: fleet.cattle.io/v1alpha1
 kind: GitRepo
 metadata:
   name: plane-tracker
-  namespace: fleet-local
+  namespace: fleet-default
 spec:
-  repo: https://github.com/gchanchal/plane-program-tracker.git
+  repo: git@github.com:gchanchal/plane-program-tracker.git
   branch: main
+  clientSecretName: auth-7hp6w
   paths:
     - deploy
+  targetNamespace: plane-tracker
+  pollingInterval: 1m0s
+  correctDrift: {}
   targets:
-    - clusterSelector:
-        matchLabels:
-          name: local
+    - clusterName: c-vg5tc

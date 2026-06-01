@@ -20,9 +20,8 @@ commonLabels:
   app.kubernetes.io/name: plane-tracker
   app.kubernetes.io/part-of: plane-tracker
 
-# CI rewrites `newTag` (see .github/workflows/build-push.yml). The placeholder
-# `plane-tracker` image name is replaced with the Docker Hub repo here.
-images:
-  - name: plane-tracker
-    newName: docker.io/makeplane/plane-tracker
-    newTag: latest
+# NOTE: the image (name/newName/newTag) is set ONLY in the prod overlay, not here.
+# If both base and overlay declared an `images:` transformer for the same name,
+# the base would rename `plane-tracker` -> docker.io/makeplane/plane-tracker:latest
+# first, and the overlay's transformer (keyed on `plane-tracker`) would no longer
+# match — silently dropping the CI-pinned SHA tag. Keep it overlay-only.
