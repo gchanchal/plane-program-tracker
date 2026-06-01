@@ -1,21 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Activity, UserCircle2, CheckSquare, CalendarClock, Users, TrendingUp, ListTree, Map as MapIcon } from 'lucide-react';
+import { NavLink } from 'react-router-dom';
 import { useDashboard } from '@/lib/dashboard-context';
 import { relativeTime } from '@/lib/format';
-import type { TabKey } from '@/lib/use-tab';
+import { TABS } from '@/lib/tabs';
 
-const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
-  { key: 'pulse',    label: 'Pulse',         Icon: Activity },
-  { key: 'roadmap',  label: 'Roadmap',       Icon: MapIcon },
-  { key: 'mywork',   label: 'My Work',       Icon: UserCircle2 },
-  { key: 'action',   label: 'Action Center', Icon: CheckSquare },
-  { key: 'due',      label: 'Due Work',      Icon: CalendarClock },
-  { key: 'capacity', label: 'Capacity',      Icon: Users },
-  { key: 'flow',     label: 'Flow',          Icon: TrendingUp },
-  { key: 'explorer', label: 'Explorer',      Icon: ListTree },
-];
-
-export function Tabs({ tab, setTab }: { tab: TabKey; setTab: (t: TabKey) => void }) {
+export function Tabs() {
   const { actions, data } = useDashboard();
   const actionCount = actions
     ? Object.values(actions).reduce((acc, b) => acc + b.items.length, 0)
@@ -32,17 +21,15 @@ export function Tabs({ tab, setTab }: { tab: TabKey; setTab: (t: TabKey) => void
   return (
     <nav className="flex items-center gap-1 border-b border-border">
       {TABS.map(t => {
-        const active = tab === t.key;
         const showBadge = t.key === 'action' && actionCount > 0;
         const sev = actionCount > 20 ? 'bad' : actionCount > 5 ? 'warn' : '';
         return (
-          <button
+          <NavLink
             key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={
+            to={t.path}
+            className={({ isActive }) =>
               'inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ' +
-              (active
+              (isActive
                 ? 'border-foreground text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground')
             }
@@ -57,7 +44,7 @@ export function Tabs({ tab, setTab }: { tab: TabKey; setTab: (t: TabKey) => void
                 {actionCount}
               </span>
             )}
-          </button>
+          </NavLink>
         );
       })}
       {lastIso && (

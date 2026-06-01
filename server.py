@@ -938,6 +938,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({'error': str(e)}, 500)
             return
+        # SPA fallback: client-side routes (e.g. /roadmap, /pulse) are served the
+        # app shell so deep-links and refreshes work. (Auth already enforced above;
+        # unknown /api/* paths still 404.)
+        if not raw_path.startswith('/api/'):
+            self._send_file(HERE / 'static' / 'dist' / 'index.html', 'text/html; charset=utf-8')
+            return
         self.send_error(404)
 
     def do_POST(self):

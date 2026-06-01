@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronDown, Check } from 'lucide-react';
 import { DashboardProvider, useDashboard } from '@/lib/dashboard-context';
-import { useTab } from '@/lib/use-tab';
+import { DEFAULT_TAB, pathForKey, keyForPath, type TabKey } from '@/lib/tabs';
+import { STORAGE_KEYS } from '@/lib/constants';
 import { Topbar } from '@/components/Topbar';
 import { Tabs } from '@/components/Tabs';
 import { PulseView } from '@/components/views/PulseView';
@@ -103,34 +105,54 @@ function Footer() {
   );
 }
 
+// "/" lands on the last tab the user visited (persisted), defaulting to Pulse.
+function lastVisitedTab(): TabKey {
+  try {
+    const v = localStorage.getItem(STORAGE_KEYS.tab);
+    if (v && keyForPath(pathForKey(v as TabKey)) === v) return v as TabKey;
+  } catch { /* ignore */ }
+  return DEFAULT_TAB;
+}
+
 function Inner() {
-  const { tab, setTab } = useTab();
   const { data } = useDashboard();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [jumpKey, setJumpKey] = useState<ActionBucketKey | null>(null);
 
+  // Remember the active tab so a later visit to "/" reopens it.
+  useEffect(() => {
+    const key = keyForPath(location.pathname);
+    if (key) { try { localStorage.setItem(STORAGE_KEYS.tab, key); } catch { /* ignore */ } }
+  }, [location.pathname]);
+
   const onJump = (k: ActionBucketKey) => {
-    setTab('action');
+    navigate(pathForKey('action'));
     setJumpKey(k);
     setTimeout(() => {
       const el = document.getElementById('bucket-' + k);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 60);
+    }, 80);
   };
 
   return (
     <main className="max-w-[1400px] mx-auto px-6">
       <Topbar />
       <Subhead />
-      <Tabs tab={tab} setTab={setTab} />
+      <Tabs />
       <div className="py-4">
-        {data && tab === 'pulse'    && <PulseView onJump={onJump} />}
-        {data && tab === 'roadmap'  && <RoadmapTimeline />}
-        {data && tab === 'mywork'   && <MyWorkView onJump={onJump} />}
-        {data && tab === 'action'   && <ActionCenterView jumpKey={jumpKey} />}
-        {data && tab === 'due'      && <DueWorkView />}
-        {data && tab === 'capacity' && <CapacityView />}
-        {data && tab === 'flow'     && <FlowView />}
-        {data && tab === 'explorer' && <ExplorerView />}
+        <Routes>
+          <Route path="/" element={<Navigate to={pathForKey(lastVisitedTab())} replace />} />
+          <Route path="/pulse"         element={data ? <PulseView onJump={onJump} /> : null} />
+          <Route path="/roadmap"       element={data ? <RoadmapTimeline /> : null} />
+          <Route path="/my-work"       element={data ? <MyWorkView onJump={onJump} /> : null} />
+          <Route path="/action-center" element={data ? <ActionCenterView jumpKey={jumpKey} /> : null} />
+          <Route path="/due-work"      element={data ? <DueWorkView /> : null} />
+          <Route path="/capacity"      element={data ? <CapacityView /> : null} />
+          <Route path="/flow"          element={data ? <FlowView /> : null} />
+          <Route path="/explorer"      element={data ? <ExplorerView /> : null} />
+          <Route path="*" element={<Navigate to={pathForKey(DEFAULT_TAB)} replace />} />
+        </Routes>
       </div>
       <Footer />
     </main>
