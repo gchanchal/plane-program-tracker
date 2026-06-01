@@ -4,10 +4,10 @@ kind: Kustomization
 namespace: plane-tracker
 
 resources:
-  - ../../base
+- ../../base
 
 # CI updates the tag here via `kustomize edit set image`.
 images:
-  - name: plane-tracker
-    newName: docker.io/makeplane/plane-tracker
-    newTag: latest
+- name: plane-tracker
+  newName: docker.io/makeplane/plane-tracker
+  newTag: 6592627e831e5afb243d3f747e7385be9db48c29
