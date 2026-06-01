@@ -6,6 +6,7 @@ resources:
   - serviceaccount.yaml
   - secretstore.yaml
   - externalsecret.yaml
+  - dockerhub-pull-externalsecret.yaml
   - configmap.yaml
   - deployment.yaml
   - service.yaml
@@ -16,8 +17,8 @@ commonLabels:
   app.kubernetes.io/part-of: plane-tracker
 
 # CI rewrites `newTag` (see .github/workflows/build-push.yml). The placeholder
-# `plane-tracker` image name is replaced with your ECR repo here.
+# `plane-tracker` image name is replaced with the Docker Hub repo here.
 images:
   - name: plane-tracker
-    newName: 426043895157.dkr.ecr.us-east-1.amazonaws.com/plane-tracker
+    newName: docker.io/makeplane/plane-tracker
     newTag: latest

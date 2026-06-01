@@ -15,6 +15,8 @@ spec:
       labels:
         app.kubernetes.io/name: plane-tracker
     spec:
+      imagePullSecrets:
+        - name: dockerhub-pull   # private Docker Hub repo; built by ExternalSecret
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

@@ -1,7 +1,11 @@
 name: build-and-push
 
-# Builds the image, pushes to ECR, then bumps the image tag in the prod overlay
-# so Fleet redeploys. Skips runs triggered by its own tag-bump commit.
+# Builds the image, pushes to Docker Hub, then bumps the image tag in the prod
+# overlay so Fleet redeploys. Skips runs triggered by its own tag-bump commit.
+#
+# Required GitHub repo secrets:
+#   DOCKERHUB_USERNAME  - Docker Hub user/org with push access to the image
+#   DOCKERHUB_TOKEN     - Docker Hub access token (Account Settings > Security)
 on:
   push:
     branches: [main]
@@ -14,13 +18,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: plane-tracker
-  # GitHub OIDC -> IAM role with ecr:* on the repo + sts:AssumeRoleWithWebIdentity trust.
-  AWS_ROLE_ARN: arn:aws:iam::426043895157:role/plane-tracker-ci
+  IMAGE: docker.io/makeplane/plane-tracker
 
 permissions:
-  id-token: write      # request the OIDC token
   contents: write      # commit the tag bump back
 
 jobs:
@@ -29,24 +29,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push
         env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
           TAG: ${{ github.sha }}
         run: |
-          docker build -t "$REGISTRY/$ECR_REPOSITORY:$TAG" -t "$REGISTRY/$ECR_REPOSITORY:latest" .
-          docker push "$REGISTRY/$ECR_REPOSITORY:$TAG"
-          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
 
       - name: Install kustomize
         run: |
@@ -55,11 +50,10 @@ jobs:
 
       - name: Bump image tag in prod overlay
         env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
           TAG: ${{ github.sha }}
         run: |
           cd deploy/overlays/prod
-          kustomize edit set image "plane-tracker=$REGISTRY/$ECR_REPOSITORY:$TAG"
+          kustomize edit set image "plane-tracker=$IMAGE:$TAG"
 
       - name: Commit and push tag bump
         run: |
