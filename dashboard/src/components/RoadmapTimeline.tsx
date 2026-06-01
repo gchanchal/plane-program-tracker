@@ -20,7 +20,8 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronRight, X, AlertTriangle, Filter as FilterIcon, Maximize2, Minimize2, ChevronsUpDown, Search } from 'lucide-react';
+import interact from 'interactjs';
+import { ChevronDown, ChevronUp, ChevronRight, X, AlertTriangle, Filter as FilterIcon, Maximize2, Minimize2, ChevronsUpDown, Search, Hand, MoveHorizontal } from 'lucide-react';
 import type { StateGroup, WorkItem } from '@/lib/types';
 import { useDashboard } from '@/lib/dashboard-context';
 import { PRIORITY_INFO } from '@/lib/constants';
@@ -34,8 +35,11 @@ const SCALES: Array<{ key: Scale; label: string; pxPerDay: number }> = [
   { key: 'quarter', label: 'Quarter', pxPerDay: 5 },
 ];
 
-const EDGE_HANDLE_PX = 8;
 const MIN_DURATION_DAYS = 1;
+// Minimum rendered bar width. Short (1–3 day) items at Month/Quarter zoom would
+// otherwise be a few pixels wide. We clamp the visual width so the two edge
+// resize handles and the centre move grip all fit without overlapping.
+const MIN_BAR_PX = 44;
 
 interface PendingEdit {
   start?: string | null;
@@ -254,10 +258,10 @@ export function RoadmapTimeline() {
         childrenOf.set(i.parent, arr);
       }
     }
-    const dateKey = (it: WorkItem) => {
-      const eff = effectiveDates(it);
-      return eff.start || eff.end || '9999';
-    };
+    // Sort by the item's PERSISTED dates, not staged ones — otherwise dragging a
+    // bar changes its sort key and the row jumps mid-edit. The list re-sorts only
+    // after edits are pushed and data reloads.
+    const dateKey = (it: WorkItem) => it.start || it.end || '9999';
     const assigneeName = (it: WorkItem) => {
       const aid = it.assignee_id;
       return (aid && (data.users[aid] || it.assignee)) || it.assignee || '';
@@ -301,7 +305,7 @@ export function RoadmapTimeline() {
     }
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, effectiveType, effectiveDates, passesStatusFilter, expandedParents, sort, searchActive, matchesSearch]);
+  }, [data, effectiveType, passesStatusFilter, expandedParents, sort, searchActive, matchesSearch]);
 
   const scrollToToday = useCallback(() => {
     if (!scrollRef.current || !range || !data) return;
@@ -811,153 +815,155 @@ function RoadmapRow({
   const assigneeColor = assigneeId ? (userColors[assigneeId] || item.assignee_color || '#888780') : '#888780';
   const extraAssignees = (item.assignee_ids?.length ?? 0) - (assigneeId ? 1 : 0);
 
-  // Bar geometry — only render a draggable bar when both dates are set, otherwise
-  // we keep the simpler 'no dates' placeholder.
-  const bothDates = !!start && !!end;
-  const startMs = start ? toUtcMidnight(start) : null;
-  const endMs   = end   ? toUtcMidnight(end)   : null;
+  // Bar geometry. Items with BOTH dates render a full draggable bar. Items with a
+  // SINGLE date render a small "partial" bar anchored on the known date: dragging
+  // the open edge sets the missing date (creating a range), dragging the middle
+  // moves the date. Items with no dates fall through to the row-click placeholder.
+  const hasStart = !!start;
+  const hasEnd = !!end;
+  const hasAnyDate = hasStart || hasEnd;
+  const isPartial = hasAnyDate && !(hasStart && hasEnd);
+  // For drag math a single-date item is treated as a zero-length span on its date.
+  const anchorStartMs = start ? toUtcMidnight(start) : (end ? toUtcMidnight(end) : null);
+  const anchorEndMs   = end   ? toUtcMidnight(end)   : (start ? toUtcMidnight(start) : null);
 
-  // ----- drag state -----
+  // ----- drag/resize via interact.js -----
+  // `drag` holds the in-progress preview (pixel delta + which gesture); the bar
+  // renders its geometry from it. interact.js owns all the pointer mechanics:
+  // resize is bound to the two edge-handle elements, move to the centre hand grip.
   const [drag, setDrag] = useState<null | {
     mode: DragMode;
-    startClientX: number;
     origStartMs: number;
     origEndMs: number;
-    deltaDays: number;
+    deltaPx: number;
   }>(null);
-  const movedRef = useRef(false);
 
-  const onPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (!bothDates || startMs === null || endMs === null) return;
-    if (e.button !== 0) return;
-    const target = e.currentTarget;
-    const rect = target.getBoundingClientRect();
-    const localX = e.clientX - rect.left;
-    const width = rect.width;
-    let mode: DragMode;
-    if (width >= EDGE_HANDLE_PX * 2 && localX <= EDGE_HANDLE_PX) mode = 'resize-start';
-    else if (width >= EDGE_HANDLE_PX * 2 && width - localX <= EDGE_HANDLE_PX) mode = 'resize-end';
-    else mode = 'move';
-    target.setPointerCapture(e.pointerId);
-    movedRef.current = false;
-    setDrag({
-      mode,
-      startClientX: e.clientX,
-      origStartMs: startMs,
-      origEndMs: endMs,
-      deltaDays: 0,
-    });
-    e.preventDefault();
-  };
+  // Latest geometry/callbacks for the interact listeners, read through a ref so the
+  // interactable is bound once and never goes stale as dates/zoom change.
+  const live = useRef({ hasStart, hasEnd, anchorStartMs, anchorEndMs, pxPerDay: range.pxPerDay, onStage, onOpenEdit });
+  live.current = { hasStart, hasEnd, anchorStartMs, anchorEndMs, pxPerDay: range.pxPerDay, onStage, onOpenEdit };
 
-  const onPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (!drag) return;
-    const dx = e.clientX - drag.startClientX;
-    if (Math.abs(dx) > 2) movedRef.current = true;
-    const days = Math.round(dx / range.pxPerDay);
-    if (days === drag.deltaDays) return;
-    setDrag({ ...drag, deltaDays: days });
-  };
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el || !hasAnyDate) return;
+    let acc = 0; // accumulated pixel delta for the active gesture
 
-  const onPointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (!drag) return;
-    const target = e.currentTarget;
-    if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
-
-    if (!movedRef.current || drag.deltaDays === 0) {
+    const commit = (rawMode: DragMode) => {
+      const L = live.current;
       setDrag(null);
-      if (!movedRef.current) onOpenEdit();
-      return;
-    }
-    // Commit final dates as staged edit.
-    let newStartMs = drag.origStartMs;
-    let newEndMs   = drag.origEndMs;
-    const delta = drag.deltaDays * DAY_MS;
-    if (drag.mode === 'move') {
-      newStartMs = drag.origStartMs + delta;
-      newEndMs   = drag.origEndMs   + delta;
-    } else if (drag.mode === 'resize-start') {
-      newStartMs = Math.min(drag.origStartMs + delta, drag.origEndMs - MIN_DURATION_DAYS * DAY_MS);
-    } else {
-      newEndMs   = Math.max(drag.origEndMs + delta, drag.origStartMs + MIN_DURATION_DAYS * DAY_MS);
-    }
-    onStage({ start: isoFromMs(newStartMs), end: isoFromMs(newEndMs) });
-    setDrag(null);
-  };
+      if (L.anchorStartMs === null || L.anchorEndMs === null) return;
+      const days = Math.round(acc / L.pxPerDay);
+      if (days === 0) return;
+      // Single-date item: the edge on the known date just moves it; the open edge
+      // extends into a range.
+      let mode = rawMode;
+      if (mode === 'resize-start' && L.hasStart && !L.hasEnd) mode = 'move';
+      if (mode === 'resize-end' && L.hasEnd && !L.hasStart) mode = 'move';
+      const delta = days * DAY_MS;
+      let ns = L.anchorStartMs;
+      let ne = L.anchorEndMs;
+      if (mode === 'move') { ns += delta; ne += delta; }
+      else if (mode === 'resize-start') ns = Math.min(L.anchorStartMs + delta, L.anchorEndMs - MIN_DURATION_DAYS * DAY_MS);
+      else ne = Math.max(L.anchorEndMs + delta, L.anchorStartMs + MIN_DURATION_DAYS * DAY_MS);
+      const activeStart = L.hasStart || mode === 'resize-start';
+      const activeEnd   = L.hasEnd   || mode === 'resize-end';
+      L.onStage({ start: activeStart ? isoFromMs(ns) : null, end: activeEnd ? isoFromMs(ne) : null });
+    };
+    const preview = (mode: DragMode) => {
+      const L = live.current;
+      if (L.anchorStartMs === null || L.anchorEndMs === null) return;
+      setDrag({ mode, origStartMs: L.anchorStartMs, origEndMs: L.anchorEndMs, deltaPx: acc });
+    };
 
-  const onPointerCancel = () => { setDrag(null); };
+    const ix = interact(el)
+      .resizable({
+        edges: { left: '.roadmap-bar-handle-l', right: '.roadmap-bar-handle-r' },
+        listeners: {
+          start() { acc = 0; },
+          move(ev: { edges?: { left?: boolean }; deltaRect?: { left: number; right: number } }) {
+            acc += ev.edges?.left ? (ev.deltaRect?.left ?? 0) : (ev.deltaRect?.right ?? 0);
+            preview(ev.edges?.left ? 'resize-start' : 'resize-end');
+          },
+          end(ev: { edges?: { left?: boolean } }) { commit(ev.edges?.left ? 'resize-start' : 'resize-end'); },
+        },
+      })
+      .draggable({
+        allowFrom: '.roadmap-bar-grip',
+        listeners: {
+          start() { acc = 0; },
+          move(ev: { dx: number }) { acc += ev.dx; preview('move'); },
+          end() { commit('move'); },
+        },
+      })
+      .on('tap', () => live.current.onOpenEdit());
+
+    return () => { ix.unset(); };
+  }, [hasAnyDate]);
 
   // ----- bar rendering (visual reflects in-progress drag delta) -----
   let bar: React.ReactElement | null = null;
-  if (bothDates && startMs !== null && endMs !== null) {
+  if (hasAnyDate && anchorStartMs !== null && anchorEndMs !== null) {
     // Apply live drag preview to displayed coordinates.
-    let dispStartMs = startMs;
-    let dispEndMs = endMs;
+    let dispStartMs = anchorStartMs;
+    let dispEndMs = anchorEndMs;
     if (drag) {
-      const delta = drag.deltaDays * DAY_MS;
+      const deltaMs = (drag.deltaPx / range.pxPerDay) * DAY_MS;
       if (drag.mode === 'move') {
-        dispStartMs = drag.origStartMs + delta;
-        dispEndMs = drag.origEndMs + delta;
+        dispStartMs = drag.origStartMs + deltaMs;
+        dispEndMs = drag.origEndMs + deltaMs;
       } else if (drag.mode === 'resize-start') {
-        dispStartMs = Math.min(drag.origStartMs + delta, drag.origEndMs - MIN_DURATION_DAYS * DAY_MS);
+        dispStartMs = Math.min(drag.origStartMs + deltaMs, drag.origEndMs - MIN_DURATION_DAYS * DAY_MS);
         dispEndMs = drag.origEndMs;
       } else {
         dispStartMs = drag.origStartMs;
-        dispEndMs = Math.max(drag.origEndMs + delta, drag.origStartMs + MIN_DURATION_DAYS * DAY_MS);
+        dispEndMs = Math.max(drag.origEndMs + deltaMs, drag.origStartMs + MIN_DURATION_DAYS * DAY_MS);
       }
     }
-    const left = ((dispStartMs - range.startMs) / DAY_MS) * range.pxPerDay;
-    const width = Math.max(8, ((dispEndMs - dispStartMs) / DAY_MS) * range.pxPerDay);
+    const width = Math.max(MIN_BAR_PX, ((dispEndMs - dispStartMs) / DAY_MS) * range.pxPerDay);
+    const anchorLeft = (ms: number) => ((ms - range.startMs) / DAY_MS) * range.pxPerDay;
+    // Both/start-anchored bars pin their LEFT edge at the start. A static (not being
+    // dragged) end-only marker pins its RIGHT edge at the due date instead.
+    const left = (!hasStart && hasEnd && !drag)
+      ? anchorLeft(dispEndMs) + range.pxPerDay - width
+      : anchorLeft(dispStartMs);
     const urgent = item.priority === 'urgent';
-    const datesStr = `${fmtDayMonth(isoFromMs(dispStartMs))} → ${fmtDayMonth(isoFromMs(dispEndMs))}`;
+    // Show a range whenever the item has both ends, or a resize-drag is forming one.
+    const showRange = (hasStart && hasEnd) || (!!drag && drag.mode !== 'move');
+    const label = showRange
+      ? `${fmtDayMonth(isoFromMs(dispStartMs))} → ${fmtDayMonth(isoFromMs(dispEndMs))}`
+      : (hasStart ? `from ${fmtDayMonth(isoFromMs(dispStartMs))}` : `due ${fmtDayMonth(isoFromMs(dispEndMs))}`);
     const durationDays = Math.max(1, Math.round((dispEndMs - dispStartMs) / DAY_MS));
-    const label = `${datesStr} · ${item.priority} · ${item.state.toLowerCase()}`;
     const cursorClass = drag
       ? (drag.mode === 'move' ? ' roadmap-bar-cursor-move' : ' roadmap-bar-cursor-ew')
       : '';
+    const openSide = hasStart ? 'due' : 'start';
+    const title = (hasStart && hasEnd)
+      ? `${item.name}\n${label} · ${item.priority} · ${item.state.toLowerCase()}\n${durationDays} day${durationDays === 1 ? '' : 's'}\nDrag a ↔ border to resize · grab the hand to move · click to edit`
+      : `${item.name}\n${label}\nDrag the open ↔ border to set the ${openSide} date · grab the hand to move · click to edit`;
     bar = (
       <button
         ref={barRef}
         type="button"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
         className={'roadmap-bar'
+          + (isPartial ? ' roadmap-bar-partial' : '')
           + (urgent ? ' roadmap-bar-urgent' : '')
           + (isDirty ? ' roadmap-bar-dirty' : '')
           + (isEditing ? ' roadmap-bar-active' : '')
           + (drag ? ' roadmap-bar-dragging' : '')
           + cursorClass}
         style={{ left: `${left}px`, width: `${width}px`, background: stateColor }}
-        title={`${item.name}\n${label}\n${durationDays} day${durationDays === 1 ? '' : 's'}`}
+        title={title}
       >
-        <span className="roadmap-bar-handle roadmap-bar-handle-l" />
+        <span className="roadmap-bar-handle roadmap-bar-handle-l" aria-hidden="true" title="Drag to move the start border">
+          <MoveHorizontal className="roadmap-bar-handle-icon" />
+        </span>
         <span className="roadmap-bar-label">{label}</span>
-        <span className="roadmap-bar-handle roadmap-bar-handle-r" />
-      </button>
-    );
-  } else if (start || end) {
-    // Single-date items: 7-day pip. End-only anchors its RIGHT edge at the end
-    // date; start-only anchors its LEFT edge at the start date.
-    const pipDays = 7;
-    const pipWidth = pipDays * range.pxPerDay;
-    let left: number;
-    if (start) {
-      left = ((toUtcMidnight(start) - range.startMs) / DAY_MS) * range.pxPerDay;
-    } else {
-      left = ((toUtcMidnight(end!) - range.startMs) / DAY_MS) * range.pxPerDay - pipWidth;
-    }
-    bar = (
-      <button
-        ref={barRef}
-        type="button"
-        onClick={onOpenEdit}
-        className={'roadmap-bar roadmap-bar-pip' + (isDirty ? ' roadmap-bar-dirty' : '') + (isEditing ? ' roadmap-bar-active' : '')}
-        style={{ left: `${left}px`, width: `${pipWidth}px`, background: stateColor, opacity: 0.75 }}
-        title={`${item.name}\n${start ? 'starts ' + fmtDayMonth(start) : 'due ' + fmtDayMonth(end)}\nClick to add the missing date`}
-      >
-        <span className="roadmap-bar-label">{start ? 'from ' + fmtDayMonth(start) : 'due ' + fmtDayMonth(end)}</span>
+        <span className="roadmap-bar-grip" aria-hidden="true" title="Drag to move the whole item">
+          <Hand className="roadmap-bar-grip-icon" />
+        </span>
+        <span className="roadmap-bar-handle roadmap-bar-handle-r" aria-hidden="true" title="Drag to move the end border">
+          <MoveHorizontal className="roadmap-bar-handle-icon" />
+        </span>
       </button>
     );
   } else {
