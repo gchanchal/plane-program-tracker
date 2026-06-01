@@ -922,33 +922,79 @@ button.kpi { font: inherit; color: inherit; width: 100%; cursor: pointer; }
   color: rgba(255, 255, 255, 0.96);
   font-size: 10.5px;
   line-height: 1;
-  cursor: grab;
+  cursor: default;
   border: 0;
   text-align: left;
-  overflow: hidden;
+  overflow: visible;
   transition: filter 0.12s ease, box-shadow 0.12s ease;
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
   user-select: none;
   touch-action: none;
 }
 .roadmap-bar:hover { filter: brightness(1.05); }
+/* Resize handles: an "↔" tab pinned to each border, INSIDE the bar so it's never
+   clipped by the timeline's scroll area. interact.js binds left/right resize to
+   these elements. Always hit-testable (pointer-events on) so a press registers even
+   without a hover frame; the icon just fades in on hover. */
 .roadmap-bar-handle {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 8px;
+  width: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: ew-resize;
-  background: linear-gradient(to right, rgba(255,255,255,0.0), rgba(255,255,255,0.18));
+  color: rgba(255, 255, 255, 0.95);
   opacity: 0;
   transition: opacity 0.12s ease;
+  z-index: 3;
+  touch-action: none;
 }
-.roadmap-bar-handle-l { left: 0; background: linear-gradient(to left, rgba(255,255,255,0.0), rgba(255,255,255,0.18)); }
-.roadmap-bar-handle-r { right: 0; }
-.roadmap-bar:hover .roadmap-bar-handle { opacity: 1; }
+.roadmap-bar-handle-l { left: 0; border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.roadmap-bar-handle-r { right: 0; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+.roadmap-bar-handle-icon { width: 11px; height: 11px; }
+.roadmap-bar:hover .roadmap-bar-handle { opacity: 0.95; background: rgba(0,0,0,0.18); }
+/* Center move grip: a hand icon. Pressing it moves the WHOLE cell. The bar body is
+   not a move target, so move and resize never fight. Always hit-testable. */
+.roadmap-bar-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  color: rgba(255, 255, 255, 0.98);
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5));
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 4;
+  touch-action: none;
+}
+.roadmap-bar-grip:active { cursor: grabbing; }
+.roadmap-bar-grip-icon { width: 13px; height: 13px; }
+.roadmap-bar:hover .roadmap-bar-grip { opacity: 1; }
+/* On hover, fade the date label so the handles/grip read clearly (dates stay in the tooltip). */
+.roadmap-bar-label { pointer-events: none; transition: opacity 0.12s ease; }
+.roadmap-bar:hover .roadmap-bar-label { opacity: 0; }
 .roadmap-bar-dragging { cursor: grabbing; filter: brightness(1.08); box-shadow: 0 4px 14px rgba(0,0,0,0.25), inset 0 0 0 1px rgba(0,0,0,0.06); z-index: 4; }
 .roadmap-bar-cursor-move { cursor: grabbing !important; }
 .roadmap-bar-cursor-ew { cursor: ew-resize !important; }
 .roadmap-bar-pip { cursor: pointer; }
+/* Single-date item: only one of start/target is set. Reads as "incomplete" until
+   the user drags an edge to define the range. Still fully draggable. */
+.roadmap-bar-partial {
+  opacity: 0.8;
+  background-image: repeating-linear-gradient(
+    -45deg, rgba(255,255,255,0.0) 0, rgba(255,255,255,0.0) 5px,
+    rgba(255,255,255,0.16) 5px, rgba(255,255,255,0.16) 10px);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+}
+.roadmap-bar-partial:hover { opacity: 1; }
 .roadmap-bar-rowclick {
   position: absolute;
   inset: 4px 0;
