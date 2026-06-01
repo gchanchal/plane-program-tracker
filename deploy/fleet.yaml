@@ -6,7 +6,7 @@ kustomize:
   dir: overlays/prod
 
 targetCustomizations:
-  - name: prod
+  - name: local
     clusterSelector:
       matchLabels:
-        env: prod
+        name: local

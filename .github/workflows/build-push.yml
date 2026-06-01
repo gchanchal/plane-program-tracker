@@ -9,9 +9,17 @@ name: build-and-push
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "deploy/overlays/**"
-      - "**/*.md"
+    # Only rebuild when something that affects the image changes. Commits that
+    # only touch deploy manifests, docs, etc. won't trigger a build — and the
+    # CI's own tag bump (deploy/overlays/**) is excluded too.
+    paths:
+      - "server.py"
+      - "static/**"
+      - "dashboard/**"
+      - "dashboard.legacy.html"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/build-push.yml"
 
 concurrency:
   group: build-push-${{ github.ref }}
