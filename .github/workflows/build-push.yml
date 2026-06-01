@@ -56,21 +56,30 @@ jobs:
           curl -sSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
-      - name: Bump image tag in prod overlay
+      - name: Bump image tag in prod overlay and push
         env:
           TAG: ${{ github.sha }}
         run: |
-          cd deploy/overlays/prod
-          kustomize edit set image "plane-tracker=$IMAGE:$TAG"
-
-      - name: Commit and push tag bump
-        run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add deploy/overlays/prod/kustomization.yaml
-          if git diff --cached --quiet; then
-            echo "No tag change to commit."
-          else
+          # Re-apply the tag edit onto the freshest branch tip on each attempt,
+          # so a concurrent merge/CI push can't cause a rejected (non-fast-forward)
+          # push or a merge conflict on the tag line.
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "$GITHUB_REF_NAME"
+            git reset --hard "origin/$GITHUB_REF_NAME"
+            ( cd deploy/overlays/prod && kustomize edit set image "plane-tracker=$IMAGE:$TAG" )
+            git add deploy/overlays/prod/kustomization.yaml
+            if git diff --cached --quiet; then
+              echo "Tag already up to date; nothing to push."
+              exit 0
+            fi
             git commit -m "ci: deploy ${GITHUB_SHA::7} [skip ci]"
-            git push
-          fi
+            if git push origin "HEAD:$GITHUB_REF_NAME"; then
+              echo "Pushed tag bump on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt); retrying on latest $GITHUB_REF_NAME..."
+          done
+          echo "Failed to push tag bump after 5 attempts." >&2
+          exit 1
