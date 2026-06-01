@@ -11,10 +11,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - tracker.PLACEHOLDER_DOMAIN
+        - plane-tracker.plane.tools
       secretName: plane-tracker-tls
   rules:
-    - host: tracker.PLACEHOLDER_DOMAIN
+    - host: plane-tracker.plane.tools
       http:
         paths:
           - path: /
