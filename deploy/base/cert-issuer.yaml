@@ -1,0 +1,23 @@
+# Namespaced ACME issuer for plane-tracker.plane.tools, mirroring the cluster's
+# existing plane-cert-issuer (Let's Encrypt prod + Cloudflare DNS-01).
+# cert-manager's ingress-shim auto-creates the Certificate (-> secret
+# plane-tracker-tls) from the Ingress annotation cert-manager.io/issuer.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: plane-tracker-cert-issuer
+spec:
+  acme:
+    email: engineering@plane.so
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: plane-tracker-cert-issuer-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token-secret
+              key: api-token
+        selector:
+          dnsZones:
+            - plane.tools
