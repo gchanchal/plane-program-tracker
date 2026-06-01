@@ -5,7 +5,7 @@ apiVersion: fleet.cattle.io/v1alpha1
 kind: GitRepo
 metadata:
   name: plane-tracker
-  namespace: fleet-default
+  namespace: fleet-local
 spec:
   repo: https://github.com/gchanchal/plane-program-tracker.git
   branch: main
@@ -14,4 +14,4 @@ spec:
   targets:
     - clusterSelector:
         matchLabels:
-          env: prod
+          name: local
