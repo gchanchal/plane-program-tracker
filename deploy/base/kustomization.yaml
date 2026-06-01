@@ -2,7 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - namespace.yaml
+  # Namespace is intentionally NOT included: Fleet creates the target namespace
+  # from defaultNamespace/targetNamespace, and a Namespace object is cluster-
+  # scoped which Fleet forbids when targetNamespace is set.
   - serviceaccount.yaml
   - secretstore.yaml
   - externalsecret.yaml
