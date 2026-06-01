@@ -19,5 +19,5 @@ commonLabels:
 # `plane-tracker` image name is replaced with your ECR repo here.
 images:
   - name: plane-tracker
-    newName: 426043895157.dkr.ecr.PLACEHOLDER_REGION.amazonaws.com/plane-tracker
+    newName: 426043895157.dkr.ecr.us-east-1.amazonaws.com/plane-tracker
     newTag: latest

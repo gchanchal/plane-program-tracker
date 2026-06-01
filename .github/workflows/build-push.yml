@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  AWS_REGION: PLACEHOLDER_REGION
+  AWS_REGION: us-east-1
   ECR_REPOSITORY: plane-tracker
   # GitHub OIDC -> IAM role with ecr:* on the repo + sts:AssumeRoleWithWebIdentity trust.
   AWS_ROLE_ARN: arn:aws:iam::426043895157:role/plane-tracker-ci
