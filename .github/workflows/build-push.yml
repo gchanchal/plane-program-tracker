@@ -1,0 +1,68 @@
+name: build-and-push
+
+# Builds the image, pushes to Docker Hub, then bumps the image tag in the prod
+# overlay so Fleet redeploys. Skips runs triggered by its own tag-bump commit.
+#
+# Required GitHub repo secrets:
+#   DOCKERHUB_USERNAME  - Docker Hub user/org with push access to the image
+#   DOCKERHUB_TOKEN     - Docker Hub access token (Account Settings > Security)
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "deploy/overlays/**"
+      - "**/*.md"
+
+concurrency:
+  group: build-push-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: docker.io/makeplane/plane-tracker
+
+permissions:
+  contents: write      # commit the tag bump back
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        env:
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+
+      - name: Install kustomize
+        run: |
+          curl -sSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Bump image tag in prod overlay
+        env:
+          TAG: ${{ github.sha }}
+        run: |
+          cd deploy/overlays/prod
+          kustomize edit set image "plane-tracker=$IMAGE:$TAG"
+
+      - name: Commit and push tag bump
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/overlays/prod/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "No tag change to commit."
+          else
+            git commit -m "ci: deploy ${GITHUB_SHA::7} [skip ci]"
+            git push
+          fi

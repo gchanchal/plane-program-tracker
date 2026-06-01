@@ -1,0 +1,11 @@
+.git
+.gitignore
+**/node_modules
+dashboard/dist
+static/dist
+data
+*.md
+.env
+.env.*
+deploy
+.github

@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: plane-tracker
+
+resources:
+  - ../../base
+
+# CI updates the tag here via `kustomize edit set image`.
+images:
+  - name: plane-tracker
+    newName: docker.io/makeplane/plane-tracker
+    newTag: latest

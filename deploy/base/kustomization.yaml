@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - secretstore.yaml
+  - externalsecret.yaml
+  - dockerhub-pull-externalsecret.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+commonLabels:
+  app.kubernetes.io/name: plane-tracker
+  app.kubernetes.io/part-of: plane-tracker
+
+# CI rewrites `newTag` (see .github/workflows/build-push.yml). The placeholder
+# `plane-tracker` image name is replaced with the Docker Hub repo here.
+images:
+  - name: plane-tracker
+    newName: docker.io/makeplane/plane-tracker
+    newTag: latest

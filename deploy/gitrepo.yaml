@@ -1,0 +1,17 @@
+# Register this repo with Fleet. Apply to the Rancher/Fleet management cluster:
+#   kubectl apply -f deploy/gitrepo.yaml
+# Namespace: fleet-default targets downstream clusters; fleet-local = local cluster.
+apiVersion: fleet.cattle.io/v1alpha1
+kind: GitRepo
+metadata:
+  name: plane-tracker
+  namespace: fleet-default
+spec:
+  repo: https://github.com/gchanchal/plane-program-tracker.git
+  branch: main
+  paths:
+    - deploy
+  targets:
+    - clusterSelector:
+        matchLabels:
+          env: prod

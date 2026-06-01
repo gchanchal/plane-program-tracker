@@ -1,0 +1,14 @@
+# Non-sensitive config. Secrets (SESSION_SECRET, PLANE_API_KEY) come from the
+# ExternalSecret -> plane-tracker-secret instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plane-tracker-config
+data:
+  PLANE_WORKSPACE_SLUG: "plane"
+  PLANE_PROJECT_ID: "02c3e1d5-d7e2-401d-a773-45ecba45d745"
+  PLANE_API_BASE: "https://api.plane.so/api/v1"
+  ALLOWED_EMAIL_DOMAINS: "plane.so"
+  WINDOW_DAYS: "183"
+  SESSION_TTL_SECONDS: "43200"
+  PORT: "8765"

@@ -1,0 +1,26 @@
+# Traefik ingress. TLS via cert-manager (users paste Plane PATs, so HTTPS matters).
+# Drop the cert-manager annotation + tls block if you terminate TLS elsewhere.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: plane-tracker
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - plane-tracker.plane.tools
+      secretName: plane-tracker-tls
+  rules:
+    - host: plane-tracker.plane.tools
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: plane-tracker
+                port:
+                  number: 80
