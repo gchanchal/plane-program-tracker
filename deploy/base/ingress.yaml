@@ -6,7 +6,7 @@ metadata:
   name: plane-tracker
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/issuer: plane-tracker-cert-issuer
 spec:
   ingressClassName: traefik
   tls:

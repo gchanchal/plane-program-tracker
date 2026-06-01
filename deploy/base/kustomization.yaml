@@ -7,6 +7,8 @@ resources:
   - secretstore.yaml
   - externalsecret.yaml
   - dockerhub-pull-externalsecret.yaml
+  - cloudflare-externalsecret.yaml
+  - cert-issuer.yaml
   - configmap.yaml
   - deployment.yaml
   - service.yaml
