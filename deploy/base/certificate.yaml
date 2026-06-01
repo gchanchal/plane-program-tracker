@@ -1,4 +1,4 @@
-# Explicit cert-manager Certificate for plane-tracker.plane.tools.
+# Explicit cert-manager Certificate for plane-tracker.plane.town.
 # Needed because Traefik IngressRoute (a CRD) is not handled by cert-manager's
 # ingress-shim, so the cert must be requested directly. Issued by the namespaced
 # plane-tracker-cert-issuer (Let's Encrypt + Cloudflare DNS-01) into the secret
@@ -13,4 +13,4 @@ spec:
     name: plane-tracker-cert-issuer
     kind: Issuer
   dnsNames:
-    - plane-tracker.plane.tools
+    - plane-tracker.plane.town
