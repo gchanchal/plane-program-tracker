@@ -1,0 +1,12 @@
+# Fleet bundle config. The GitRepo CR points `paths: [deploy]` here.
+# Fleet runs `kustomize build` on the dir below and applies the result.
+defaultNamespace: plane-tracker
+
+kustomize:
+  dir: overlays/prod
+
+targetCustomizations:
+  - name: prod
+    clusterSelector:
+      matchLabels:
+        env: prod

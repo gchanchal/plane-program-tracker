@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-tracker
+spec:
+  # Keep at 1: the data/ cache and in-memory refresh lock are per-pod and not shared.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: plane-tracker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: plane-tracker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: app
+          image: plane-tracker  # rewritten by kustomize images: transformer
+          ports:
+            - name: http
+              containerPort: 8765
+          envFrom:
+            - configMapRef:
+                name: plane-tracker-config
+            - secretRef:
+                name: plane-tracker-secret
+          readinessProbe:
+            httpGet:
+              path: /login        # public route, returns 200 without auth
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: cache
+              mountPath: /app/data
+      volumes:
+        # Cache is re-pullable via Refresh. Swap for a PVC if you want
+        # data.json / history.jsonl to survive pod restarts.
+        - name: cache
+          emptyDir: {}
