@@ -17,7 +17,7 @@ env:
   AWS_REGION: PLACEHOLDER_REGION
   ECR_REPOSITORY: plane-tracker
   # GitHub OIDC -> IAM role with ecr:* on the repo + sts:AssumeRoleWithWebIdentity trust.
-  AWS_ROLE_ARN: arn:aws:iam::PLACEHOLDER_ACCOUNT:role/plane-tracker-ci
+  AWS_ROLE_ARN: arn:aws:iam::426043895157:role/plane-tracker-ci
 
 permissions:
   id-token: write      # request the OIDC token

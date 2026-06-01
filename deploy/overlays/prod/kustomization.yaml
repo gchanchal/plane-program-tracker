@@ -9,5 +9,5 @@ resources:
 # CI updates the tag here via `kustomize edit set image`.
 images:
   - name: plane-tracker
-    newName: PLACEHOLDER_ACCOUNT.dkr.ecr.PLACEHOLDER_REGION.amazonaws.com/plane-tracker
+    newName: 426043895157.dkr.ecr.PLACEHOLDER_REGION.amazonaws.com/plane-tracker
     newTag: latest
