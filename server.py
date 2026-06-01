@@ -38,6 +38,10 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 # ---- Config ----
+# Bind host. Defaults to all interfaces so the server is reachable inside a
+# container (Service/ingress/health probes connect via the pod IP, not
+# loopback). For local-only dev, set HOST=localhost.
+HOST = os.environ.get('HOST', '0.0.0.0')
 PORT = int(os.environ.get('PORT', 8765))
 PLANE_API_KEY = os.environ.get('PLANE_API_KEY', '').strip()
 PLANE_WORKSPACE_SLUG = os.environ.get('PLANE_WORKSPACE_SLUG', '').strip()
@@ -1078,7 +1082,7 @@ def main():
         print('!! No auth and no PLANE_API_KEY. Either set SESSION_SECRET (per-user PAT login)')
         print('   or set PLANE_API_KEY (single-user local dev). See README.md.')
         sys.exit(1)
-    print(f'Dashboard server on http://localhost:{PORT}')
+    print(f'Dashboard server listening on {HOST}:{PORT}', flush=True)
     print(f'  Workspace: {PLANE_WORKSPACE_SLUG}')
     print(f'  Project:   {PLANE_PROJECT_ID}')
     print(f'  Window:    last {WINDOW_DAYS} days')
@@ -1087,7 +1091,7 @@ def main():
     else:
         print('  Auth:      DISABLED — using shared PLANE_API_KEY from .env. Set SESSION_SECRET to require login.')
     print(f'  Open the URL in your browser, then click Refresh.')
-    HTTPServer(('localhost', PORT), Handler).serve_forever()
+    HTTPServer((HOST, PORT), Handler).serve_forever()
 
 
 if __name__ == '__main__':

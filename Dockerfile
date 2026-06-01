@@ -25,6 +25,8 @@ COPY --from=web /app/static/dist ./static/dist
 RUN mkdir -p /app/data
 
 ENV PORT=8765
+# Unbuffered stdout/stderr so logs stream to kubectl logs in real time
+ENV PYTHONUNBUFFERED=1
 EXPOSE 8765
 
 # Drop root
