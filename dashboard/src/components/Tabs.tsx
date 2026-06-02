@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useDashboard } from '@/lib/dashboard-context';
 import { relativeTime } from '@/lib/format';
-import { TABS } from '@/lib/tabs';
+import { TABS, segmentForKey } from '@/lib/tabs';
 
 export function Tabs() {
-  const { actions, data } = useDashboard();
+  const { actions, data, workspaceSlug } = useDashboard();
+  // Until we know the workspace, tabs have nowhere to link.
+  if (!workspaceSlug) return null;
   const actionCount = actions
     ? Object.values(actions).reduce((acc, b) => acc + b.items.length, 0)
     : 0;
@@ -26,7 +28,7 @@ export function Tabs() {
         return (
           <NavLink
             key={t.key}
-            to={t.path}
+            to={`/${workspaceSlug}/${segmentForKey(t.key)}`}
             className={({ isActive }) =>
               'inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ' +
               (isActive

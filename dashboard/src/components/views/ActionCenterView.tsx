@@ -47,7 +47,7 @@ interface FixState {
 }
 
 export function ActionCenterView({ jumpKey }: { jumpKey: ActionBucketKey | null }) {
-  const { data, actions, currentProject, currentProjectId, refresh } = useDashboard();
+  const { data, actions, currentProject, currentProjectId, workspaceSlug, refresh } = useDashboard();
   const [open, setOpen] = useState<Set<ActionBucketKey>>(() => new Set());
   const [fix, setFix] = useState<FixState | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -153,7 +153,7 @@ export function ActionCenterView({ jumpKey }: { jumpKey: ActionBucketKey | null 
     }
     setFix(s => s ? { ...s, saving: true, msg: '', msgKind: '' } : s);
     try {
-      await api.patchWorkItem(currentProjectId, fix.itemId, patch);
+      await api.patchWorkItem(workspaceSlug!, currentProjectId, fix.itemId, patch);
       setFix(s => s ? { ...s, msg: 'Updated. Refreshing…', msgKind: 'ok' } : s);
       await refresh();
       setFix(null);

@@ -47,6 +47,35 @@ PLANE_API_KEY = os.environ.get('PLANE_API_KEY', '').strip()
 PLANE_WORKSPACE_SLUG = os.environ.get('PLANE_WORKSPACE_SLUG', '').strip()
 PLANE_PROJECT_ID = os.environ.get('PLANE_PROJECT_ID', '02c3e1d5-d7e2-401d-a773-45ecba45d745').strip()
 PLANE_API_BASE = os.environ.get('PLANE_API_BASE', 'https://api.plane.so/api/v1').rstrip('/')
+# The Plane API base for the CURRENT request's session (set per request from the
+# session's instance). The server is single-threaded (HTTPServer), so a module
+# global is safe: every Plane call happens synchronously within one request after
+# the base has been set. Defaults to the env/cloud base.
+_active_api_base = PLANE_API_BASE
+
+
+def derive_api_base(url: str) -> str:
+    """Turn a pasted Plane URL into its REST API base.
+
+    app.plane.so (cloud) → https://api.plane.so/api/v1
+    self-hosted host     → https://<host>/api/v1
+    """
+    raw = (url or '').strip()
+    if not raw:
+        return PLANE_API_BASE
+    if '://' not in raw:
+        raw = 'https://' + raw
+    try:
+        p = urllib.parse.urlparse(raw)
+        host = (p.netloc or '').split('@')[-1]
+        scheme = p.scheme or 'https'
+        if not host:
+            return PLANE_API_BASE
+        if host in ('app.plane.so', 'plane.so', 'www.plane.so', 'api.plane.so'):
+            return 'https://api.plane.so/api/v1'
+        return f'{scheme}://{host}/api/v1'
+    except Exception:
+        return PLANE_API_BASE
 WINDOW_DAYS = int(os.environ.get('WINDOW_DAYS', 183))
 HERE = Path(__file__).resolve().parent
 DATA_DIR = HERE / 'data'
@@ -62,8 +91,65 @@ SESSION_TTL_SECONDS = int(os.environ.get('SESSION_TTL_SECONDS', 604800))  # 7 da
 SESSION_COOKIE = 'pt_session'
 
 
-def data_path_for(project_id: str) -> Path:
-    return DATA_DIR / f'{project_id}.json'
+def safe_slug(slug: str) -> str:
+    """Sanitise a workspace slug for use in API paths and as a folder name."""
+    return re.sub(r'[^a-z0-9_-]', '', (slug or '').strip().lower())
+
+
+def parse_workspace_slug(raw: str) -> str:
+    """Accept a workspace slug or a pasted Plane URL and return the bare slug.
+
+    Handles: "my-ws", "app.plane.so/my-ws/...", "https://app.plane.so/my-ws",
+    and "my-ws.plane.so".
+    """
+    raw = (raw or '').strip()
+    if not raw:
+        return ''
+    if '/' in raw or '://' in raw or '.' in raw:
+        try:
+            u = raw if '://' in raw else 'https://' + raw
+            p = urllib.parse.urlparse(u)
+            segs = [s for s in p.path.split('/') if s]
+            if segs:
+                return safe_slug(segs[0])
+            host = p.netloc.split(':')[0]
+            parts = host.split('.')
+            if len(parts) >= 3 and parts[0] not in ('app', 'www', 'my'):
+                return safe_slug(parts[0])
+        except Exception:
+            pass
+    return safe_slug(raw)
+
+
+def workspace_dir(slug: str) -> Path:
+    return DATA_DIR / (safe_slug(slug) or '_default')
+
+
+def data_path_for(project_id: str, slug: str) -> Path:
+    return workspace_dir(slug) / f'{project_id}.json'
+
+
+def history_path_for(project_id: str, slug: str) -> Path:
+    return workspace_dir(slug) / f'{project_id}.history.jsonl'
+
+
+def migrate_flat_data_files():
+    """One-time: move legacy data/<pid>.json (single-workspace layout) into
+    data/<PLANE_WORKSPACE_SLUG>/ so the per-workspace layout finds them."""
+    if not PLANE_WORKSPACE_SLUG or not DATA_DIR.is_dir():
+        return
+    dest = workspace_dir(PLANE_WORKSPACE_SLUG)
+    moved = 0
+    for f in DATA_DIR.glob('*.json'):
+        dest.mkdir(parents=True, exist_ok=True)
+        f.rename(dest / f.name)
+        moved += 1
+    for f in DATA_DIR.glob('*.history.jsonl'):
+        dest.mkdir(parents=True, exist_ok=True)
+        f.rename(dest / f.name)
+        moved += 1
+    if moved:
+        print(f'  Migrated {moved} cache file(s) into data/{safe_slug(PLANE_WORKSPACE_SLUG)}/', file=sys.stderr)
 
 # ---- Static lookups (would normally also come from API; baked for simplicity) ----
 TYPES = {
@@ -97,9 +183,18 @@ STATE_GROUP_INFO = {
 USERS = {}
 PALETTE = ['#534AB7','#D85A30','#1D9E75','#BA7517','#D4537E','#185FA5','#639922','#A32D2D','#9B59B6','#16A085','#E67E22','#8E44AD','#2C3E50','#C0392B','#27AE60']
 
-# ---- Refresh state (single-threaded; refresh is held behind a lock) ----
+# ---- Refresh state (keyed per workspace+project; refresh held behind a lock) ----
 _refresh_lock = threading.Lock()
-_refresh_state = {'in_progress': False, 'last_run': None, 'last_error': None, 'pages_fetched': 0}
+_refresh_states = {}  # (slug, project_id) -> {in_progress, last_run, last_error, pages_fetched}
+
+
+def refresh_state_for(slug: str, project_id: str) -> dict:
+    key = (safe_slug(slug), project_id)
+    st = _refresh_states.get(key)
+    if st is None:
+        st = {'in_progress': False, 'last_run': None, 'last_error': None, 'pages_fetched': 0}
+        _refresh_states[key] = st
+    return st
 
 
 _DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -115,7 +210,7 @@ def _resolve_api_key(api_key: str = None) -> str:
 
 def plane_patch(path: str, body: dict, api_key: str = None) -> dict:
     """PATCH against Plane REST API. Returns parsed JSON (or empty dict)."""
-    url = f'{PLANE_API_BASE}/{path.lstrip("/")}'
+    url = f'{_active_api_base}/{path.lstrip("/")}'
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         url, data=data, method='PATCH',
@@ -137,7 +232,7 @@ def plane_patch(path: str, body: dict, api_key: str = None) -> dict:
 
 def plane_post(path: str, body: dict, api_key: str = None) -> dict:
     """POST against Plane REST API. Returns parsed JSON (or empty dict)."""
-    url = f'{PLANE_API_BASE}/{path.lstrip("/")}'
+    url = f'{_active_api_base}/{path.lstrip("/")}'
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         url, data=data, method='POST',
@@ -159,7 +254,7 @@ def plane_post(path: str, body: dict, api_key: str = None) -> dict:
 
 def plane_get(path: str, params=None, api_key: str = None) -> dict:
     """GET against Plane REST API. Returns parsed JSON."""
-    url = f'{PLANE_API_BASE}/{path.lstrip("/")}'
+    url = f'{_active_api_base}/{path.lstrip("/")}'
     if params:
         url += '?' + urllib.parse.urlencode(params)
     req = urllib.request.Request(
@@ -178,9 +273,9 @@ def plane_get(path: str, params=None, api_key: str = None) -> dict:
         raise RuntimeError(f'Plane API {e.code} on {path}: {body}') from None
 
 
-def fetch_projects(api_key: str = None):
+def fetch_projects(slug: str, api_key: str = None):
     """List projects in the workspace for the dropdown."""
-    path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/'
+    path = f'workspaces/{slug}/projects/'
     result = plane_get(path, api_key=api_key)
     items = result if isinstance(result, list) else result.get('results') or []
     out = []
@@ -197,11 +292,11 @@ def fetch_projects(api_key: str = None):
     return out
 
 
-def fetch_work_items(project_id: str, window_days=WINDOW_DAYS, max_pages=30, api_key: str = None):
+def fetch_work_items(project_id: str, slug: str, window_days=WINDOW_DAYS, max_pages=30, api_key: str = None, state: dict = None):
     """Paginate work items newest-first, stop when items age past the window."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).date().isoformat()
     all_items, cursor, pages = [], None, 0
-    path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/work-items/'
+    path = f'workspaces/{slug}/projects/{project_id}/work-items/'
     while pages < max_pages:
         params = {'per_page': 100}
         if cursor:
@@ -215,7 +310,8 @@ def fetch_work_items(project_id: str, window_days=WINDOW_DAYS, max_pages=30, api
         else:
             items, next_cursor = result, None
         all_items.extend(items)
-        _refresh_state['pages_fetched'] = pages + 1
+        if state is not None:
+            state['pages_fetched'] = pages + 1
         # Stop early once the oldest item on this page is past the window
         if items:
             oldest = min((i.get('created_at') or '') for i in items)
@@ -233,10 +329,10 @@ def fetch_work_items(project_id: str, window_days=WINDOW_DAYS, max_pages=30, api
     return [i for i in all_items if (i.get('created_at') or '')[:10] >= cutoff]
 
 
-def fetch_states(project_id: str, api_key: str = None):
+def fetch_states(project_id: str, slug: str, api_key: str = None):
     """Fetch project states; returns {state_id: {name, group, color}}."""
     try:
-        path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/states/'
+        path = f'workspaces/{slug}/projects/{project_id}/states/'
         result = plane_get(path, api_key=api_key)
         items = result if isinstance(result, list) else result.get('results') or []
         out = {}
@@ -258,11 +354,11 @@ def fetch_states(project_id: str, api_key: str = None):
         return {}
 
 
-def fetch_types(project_id: str, api_key: str = None):
+def fetch_types(project_id: str, slug: str, api_key: str = None):
     """Fetch project work item types; returns {type_id: {name, color}}."""
     endpoints = [
-        f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/work-item-types/',
-        f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/issue-types/',
+        f'workspaces/{slug}/projects/{project_id}/work-item-types/',
+        f'workspaces/{slug}/projects/{project_id}/issue-types/',
     ]
     for endpoint in endpoints:
         try:
@@ -282,10 +378,10 @@ def fetch_types(project_id: str, api_key: str = None):
     return {}
 
 
-def fetch_labels(project_id: str, api_key: str = None):
+def fetch_labels(project_id: str, slug: str, api_key: str = None):
     """Fetch project labels; returns {label_id: {name, color}}."""
     try:
-        path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/labels/'
+        path = f'workspaces/{slug}/projects/{project_id}/labels/'
         result = plane_get(path, api_key=api_key)
         items = result if isinstance(result, list) else result.get('results') or []
         out = {}
@@ -311,10 +407,10 @@ def _looks_like_id(s):
     return len(plain) >= 16 and all(c in '0123456789abcdef' for c in plain)
 
 
-def fetch_members(api_key: str = None):
+def fetch_members(slug: str, api_key: str = None):
     """Pull workspace members for assignee names. Falls through several fields to skip UUID-as-name junk."""
     try:
-        path = f'workspaces/{PLANE_WORKSPACE_SLUG}/members/'
+        path = f'workspaces/{slug}/members/'
         result = plane_get(path, api_key=api_key)
         members = result if isinstance(result, list) else result.get('results') or []
         out = {}
@@ -499,18 +595,18 @@ def aggregate(items, users, states=None, types=None, labels=None):
     }
 
 
-def do_refresh(project_id: str, api_key: str = None):
-    """Re-fetch + write data-<project_id>.json. Returns updated data."""
-    print('  Fetching workspace members...', file=sys.stderr)
-    users = fetch_members(api_key=api_key)
+def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = None):
+    """Re-fetch + write data/<slug>/<project_id>.json. Returns updated data."""
+    print(f'  Fetching workspace members for {slug}...', file=sys.stderr)
+    users = fetch_members(slug, api_key=api_key)
     print(f'  Got {len(users)} members.', file=sys.stderr)
     print(f'  Fetching project states + types + labels for {project_id}...', file=sys.stderr)
-    states = fetch_states(project_id, api_key=api_key)
-    types = fetch_types(project_id, api_key=api_key)
-    labels = fetch_labels(project_id, api_key=api_key)
+    states = fetch_states(project_id, slug, api_key=api_key)
+    types = fetch_types(project_id, slug, api_key=api_key)
+    labels = fetch_labels(project_id, slug, api_key=api_key)
     print(f'  Got {len(states)} states, {len(types)} work item types, {len(labels)} labels.', file=sys.stderr)
     print(f'  Fetching work items for {project_id} (last {WINDOW_DAYS} days)...', file=sys.stderr)
-    items = fetch_work_items(project_id, api_key=api_key)
+    items = fetch_work_items(project_id, slug, api_key=api_key, state=state)
     print(f'  Got {len(items)} items in window.', file=sys.stderr)
     data = aggregate(items, users, states, types, labels)
     data['_meta'] = {
@@ -518,10 +614,10 @@ def do_refresh(project_id: str, api_key: str = None):
         'item_count': len(items),
         'window_days': WINDOW_DAYS,
         'project_id': project_id,
-        'workspace_slug': PLANE_WORKSPACE_SLUG,
+        'workspace_slug': slug,
     }
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    data_path_for(project_id).write_text(json.dumps(data, default=str))
+    workspace_dir(slug).mkdir(parents=True, exist_ok=True)
+    data_path_for(project_id, slug).write_text(json.dumps(data, default=str))
     snapshot = {
         'ts': data['_meta']['last_refreshed_at'],
         'group_counts': data['group_counts'],
@@ -529,7 +625,7 @@ def do_refresh(project_id: str, api_key: str = None):
         'type_counts': data['type_counts'],
         'kpi': data['kpi'],
     }
-    with (DATA_DIR / f'{project_id}.history.jsonl').open('a') as fh:
+    with history_path_for(project_id, slug).open('a') as fh:
         fh.write(json.dumps(snapshot, default=str) + '\n')
     return data
 
@@ -550,62 +646,70 @@ def _sign(payload: str) -> str:
     return _b64url_encode(mac)
 
 
-def make_session_token(email: str, pat: str, user_id: str = '', display_name: str = '', ttl: int = None) -> str:
-    """Signed cookie value carrying the user's identity + Plane PAT.
+def make_session_token(email: str, pat: str, user_id: str = '', display_name: str = '', remembered=None, api_base: str = '', ttl: int = None) -> str:
+    """Signed cookie value carrying the user's identity + Plane PAT + the list of
+    workspaces they've added (most-recent first) + the instance API base.
 
-    Format: b64(email).b64(pat).b64(user_id).b64(display_name).expiry.sig
+    Format: b64(email).b64(pat).b64(user_id).b64(display_name).b64(remembered_csv).b64(api_base).expiry.sig
     Signed with SESSION_SECRET — anyone tampering breaks the sig.
     The PAT is base64-encoded but not encrypted; the cookie is HttpOnly/SameSite=Lax.
     """
     ttl = ttl if ttl is not None else SESSION_TTL_SECONDS
     expiry = int(time.time()) + ttl
+    remembered_csv = ','.join(safe_slug(s) for s in (remembered or []) if safe_slug(s))
     payload = (
         f'{_b64url_encode(email.encode())}.'
         f'{_b64url_encode(pat.encode())}.'
         f'{_b64url_encode((user_id or "").encode())}.'
         f'{_b64url_encode((display_name or "").encode())}.'
+        f'{_b64url_encode(remembered_csv.encode())}.'
+        f'{_b64url_encode((api_base or "").encode())}.'
         f'{expiry}'
     )
     return f'{payload}.{_sign(payload)}'
 
 
 def parse_session_token(token: str):
-    """Return (email, pat, user_id, display_name) if valid, else (None, None, None, None).
+    """Return (email, pat, user_id, display_name, remembered_list, api_base) if valid,
+    else all None.
 
-    Tolerates older 5-segment tokens (no display_name) and 4-segment tokens (no user_id).
+    Segment 5 is a CSV of remembered workspace slugs; segment 6 is the instance API
+    base. Older tokens that predate either field fall back to empty / the cloud base.
     """
+    none = (None, None, None, None, None, None)
     if not token or not SESSION_SECRET:
-        return None, None, None, None
+        return none
     parts = token.split('.')
-    if len(parts) == 6:
+    user_b64 = name_b64 = ws_b64 = base_b64 = ''
+    if len(parts) == 8:
+        email_b64, pat_b64, user_b64, name_b64, ws_b64, base_b64, expiry_s, sig = parts
+    elif len(parts) == 7:
+        email_b64, pat_b64, user_b64, name_b64, ws_b64, expiry_s, sig = parts
+    elif len(parts) == 6:
         email_b64, pat_b64, user_b64, name_b64, expiry_s, sig = parts
     elif len(parts) == 5:
         email_b64, pat_b64, user_b64, expiry_s, sig = parts
-        name_b64 = ''
     elif len(parts) == 4:
         email_b64, pat_b64, expiry_s, sig = parts
-        user_b64 = ''
-        name_b64 = ''
     else:
-        return None, None, None, None
-    if len(parts) == 6:
-        payload = f'{email_b64}.{pat_b64}.{user_b64}.{name_b64}.{expiry_s}'
-    elif len(parts) == 5:
-        payload = f'{email_b64}.{pat_b64}.{user_b64}.{expiry_s}'
-    else:
-        payload = f'{email_b64}.{pat_b64}.{expiry_s}'
+        return none
+    # The signed payload is every segment except the trailing signature.
+    payload = '.'.join(parts[:-1])
     if not hmac.compare_digest(_sign(payload), sig):
-        return None, None, None, None
+        return none
     try:
         if int(expiry_s) < int(time.time()):
-            return None, None, None, None
+            return none
         email = _b64url_decode(email_b64).decode('utf-8')
         pat = _b64url_decode(pat_b64).decode('utf-8')
         user_id = _b64url_decode(user_b64).decode('utf-8') if user_b64 else ''
         display_name = _b64url_decode(name_b64).decode('utf-8') if name_b64 else ''
-        return email, pat, user_id, display_name
+        ws_csv = _b64url_decode(ws_b64).decode('utf-8') if ws_b64 else ''
+        remembered = [safe_slug(s) for s in ws_csv.split(',') if safe_slug(s)]
+        api_base = (_b64url_decode(base_b64).decode('utf-8') if base_b64 else '') or PLANE_API_BASE
+        return email, pat, user_id, display_name, remembered, api_base
     except (ValueError, UnicodeDecodeError):
-        return None, None, None, None
+        return none
 
 
 def _resolve_display_name(info: dict) -> str:
@@ -652,7 +756,7 @@ def _read_cookies(handler) -> dict:
 
 
 def _session(handler):
-    """Return (email, pat, user_id, display_name), or (None, None, None, None)."""
+    """Return (email, pat, user_id, display_name, remembered_list), or all None."""
     return parse_session_token(_read_cookies(handler).get(SESSION_COOKIE, ''))
 
 
@@ -672,7 +776,7 @@ def auth_enabled() -> bool:
 
 def fetch_plane_user(api_key: str) -> dict:
     """Call Plane's /users/me/ with the given PAT. Raises on failure."""
-    url = f'{PLANE_API_BASE}/users/me/'
+    url = f'{_active_api_base}/users/me/'
     req = urllib.request.Request(
         url,
         headers={'X-API-Key': api_key, 'Accept': 'application/json', 'User-Agent': _DEFAULT_UA},
@@ -696,8 +800,9 @@ LOGIN_PAGE_HTML = """<!doctype html>
   h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; text-align: center; }
   p { margin: 0 0 20px; color: #9aa0ad; font-size: 13px; line-height: 1.5; text-align: center; }
   label { display: block; font-size: 12px; color: #b9bdc8; margin: 0 0 6px; font-weight: 500; }
-  input[type=password] { width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit; font-size: 13px; color: #e6e7ea; background: #0b0d12; border: 1px solid #2b303d; border-radius: 8px; outline: none; }
-  input[type=password]:focus { border-color: #3F76FF; }
+  input[type=password], input[type=text] { width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit; font-size: 13px; color: #e6e7ea; background: #0b0d12; border: 1px solid #2b303d; border-radius: 8px; outline: none; }
+  input[type=password]:focus, input[type=text]:focus { border-color: #3F76FF; }
+  .field { margin-bottom: 12px; }
   button { margin-top: 14px; width: 100%; padding: 10px 18px; font: inherit; font-size: 14px; font-weight: 500; color: white; background: #3F76FF; border: 0; border-radius: 8px; cursor: pointer; transition: background .15s; }
   button:hover { background: #5388ff; }
   .err { margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; background: #3a1d1d; color: #ffb4b4; font-size: 13px; }
@@ -717,12 +822,19 @@ LOGIN_PAGE_HTML = """<!doctype html>
     <p>Sign in with your Plane Personal Access Token.</p>
     __ERROR__
     <form method=\"POST\" action=\"/auth/pat/login\" autocomplete=\"off\">
-      <label for=\"pat\">Plane PAT</label>
-      <input id=\"pat\" name=\"pat\" type=\"password\" placeholder=\"plane_api_…\" autofocus required>
+      <div class=\"field\">
+        <label for=\"url\">Plane URL</label>
+        <input id=\"url\" name=\"url\" type=\"text\" placeholder=\"https://app.plane.so/\" value=\"https://app.plane.so/\">
+      </div>
+      <div class=\"field\">
+        <label for=\"pat\">Plane PAT</label>
+        <input id=\"pat\" name=\"pat\" type=\"password\" placeholder=\"plane_api_…\" autofocus required>
+      </div>
       <button type=\"submit\">Sign in</button>
     </form>
     <div class=\"hint\">
-      Get one at <a href=\"https://app.plane.so/profile/settings\" target=\"_blank\" rel=\"noopener\">app.plane.so → Personal Access Tokens</a>.<br>
+      Sign in with your account token; you'll pick a workspace inside the app.<br>
+      Get a token at <a href=\"https://app.plane.so/profile/settings\" target=\"_blank\" rel=\"noopener\">app.plane.so → Personal Access Tokens</a>.<br>
       Only __DOMAINS__ accounts allowed.
     </div>
   </div>
@@ -782,27 +894,48 @@ class Handler(BaseHTTPRequestHandler):
         return parsed.path, pid
 
     def _require_auth(self, path: str):
-        """Return (email, pat) for the signed-in user, or send 302/401 and return None.
+        """Return (email, pat, remembered_workspaces) for the signed-in user, or
+        send 302/401 and return None.
 
-        - If auth is not configured (no SESSION_SECRET), falls back to the global PLANE_API_KEY
-          so single-user local-dev still works without logging in.
+        The active workspace is NOT in the session — it comes from the request
+        (the `workspace` query param / URL). The session only carries the list of
+        workspaces the user has added. Empty list is allowed (fresh login).
+
+        - If auth is not configured (no SESSION_SECRET), falls back to the global
+          PLANE_API_KEY + PLANE_WORKSPACE_SLUG so single-user local-dev still works.
         - HTML requests get a 302 to /login; API requests get 401 JSON.
         """
+        global _active_api_base
         if not auth_enabled():
-            return ('__noauth__', PLANE_API_KEY)
-        email, pat, user_id, name = _session(self)
+            _active_api_base = PLANE_API_BASE
+            env = safe_slug(PLANE_WORKSPACE_SLUG)
+            return ('__noauth__', PLANE_API_KEY, [env] if env else [])
+        email, pat, user_id, name, remembered, api_base = _session(self)
         if email and pat and _email_allowed(email):
+            # Point all Plane calls at this session's instance for the request.
+            _active_api_base = api_base or PLANE_API_BASE
             # Sliding session: refresh cookie expiry on every authenticated
             # request so active users never get bumped to /login. Cookie is
             # attached automatically by _send_* helpers.
-            fresh = make_session_token(email, pat, user_id, name)
+            fresh = make_session_token(email, pat, user_id, name, remembered=remembered, api_base=_active_api_base)
             self._renew_cookie = _cookie_header(SESSION_COOKIE, fresh, max_age=SESSION_TTL_SECONDS)
-            return (email, pat)
+            return (email, pat, remembered)
         if path.startswith('/api/'):
             self._send_json({'error': 'unauthenticated'}, 401)
         else:
             _redirect(self, '/login')
         return None
+
+    def _workspace(self, remembered):
+        """Resolve the active workspace for this request from the `workspace`
+        query param, validated against the user's remembered list. Returns '' if
+        the param names a workspace the user hasn't added. Defaults to the most
+        recent remembered workspace when the param is absent."""
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        ws = safe_slug((qs.get('workspace') or [''])[0])
+        if ws:
+            return ws if ws in remembered else ''
+        return remembered[0] if remembered else ''
 
     def _send_html(self, body: bytes, status: int = 200, set_cookies=None):
         self.send_response(status)
@@ -846,7 +979,7 @@ class Handler(BaseHTTPRequestHandler):
         auth = self._require_auth(raw_path)
         if auth is None:
             return
-        _email, api_key = auth
+        _email, api_key, remembered = auth
 
         # Serve React build at /. Legacy /dashboard.html still works during transition.
         if self.path == '/' or self.path.startswith('/?'):
@@ -863,27 +996,38 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         path, pid = self._query_project_id()
+        slug = self._workspace(remembered)
         if path == '/api/me':
             if auth_enabled():
-                email, _pat, user_id, display_name = _session(self)
+                email, _pat, user_id, display_name, _r, _ab = _session(self)
             else:
                 email, user_id, display_name = None, None, None
             self._send_json({
                 'email': email,
                 'user_id': user_id,
                 'display_name': display_name,
+                'workspaces': remembered,
+                'workspace_slug': slug,
                 'auth_enabled': auth_enabled(),
             })
             return
         if path == '/api/projects':
+            if not slug:
+                self._send_json({'projects': [], 'default_project_id': None, 'workspace_slug': '', 'needs_workspace': True})
+                return
             try:
-                projects = fetch_projects(api_key)
-                self._send_json({'projects': projects, 'default_project_id': PLANE_PROJECT_ID})
+                projects = fetch_projects(slug, api_key)
+                ids = {p['id'] for p in projects}
+                default_pid = PLANE_PROJECT_ID if PLANE_PROJECT_ID in ids else (projects[0]['id'] if projects else None)
+                self._send_json({'projects': projects, 'default_project_id': default_pid, 'workspace_slug': slug})
             except Exception as e:
                 self._send_json({'error': str(e)}, 500)
             return
         if path == '/api/data':
-            p = data_path_for(pid)
+            if not slug:
+                self._send_json({'error': 'no workspace selected', 'needs_workspace': True}, 400)
+                return
+            p = data_path_for(pid, slug)
             if p.exists():
                 # Auto-invalidate caches written before the labels feature.
                 # The `labels_list` key was added when fetch_labels landed; its
@@ -897,7 +1041,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({
                         'error': 'cache predates labels schema; refresh required',
                         'project_id': pid,
-                        'state': _refresh_state,
+                        'state': refresh_state_for(slug, pid),
                     }, 404)
                     return
                 if raw:
@@ -910,10 +1054,10 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._send_file(p, 'application/json')
             else:
-                self._send_json({'error': 'no cached data; click Refresh', 'project_id': pid, 'state': _refresh_state}, 404)
+                self._send_json({'error': 'no cached data; click Refresh', 'project_id': pid, 'state': refresh_state_for(slug, pid)}, 404)
             return
         if path == '/api/history':
-            hist_path = DATA_DIR / f'{pid}.history.jsonl'
+            hist_path = history_path_for(pid, slug)
             if hist_path.exists():
                 rows = [json.loads(line) for line in hist_path.read_text().splitlines() if line.strip()]
                 self._send_json({'history': rows})
@@ -921,7 +1065,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({'history': []})
             return
         if path == '/api/status':
-            self._send_json(_refresh_state)
+            self._send_json(refresh_state_for(slug, pid))
             return
         if path == '/api/work-item-comments':
             qs = urllib.parse.parse_qs(parsed.query)
@@ -930,7 +1074,7 @@ class Handler(BaseHTTPRequestHandler):
             if not item_id:
                 self._send_json({'error': 'item_id is required'}, 400)
                 return
-            api_path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/work-items/{item_id}/comments/'
+            api_path = f'workspaces/{slug}/projects/{project_id}/work-items/{item_id}/comments/'
             try:
                 result = plane_get(api_path, api_key=api_key)
                 rows = result.get('results') if isinstance(result, dict) else result
@@ -963,16 +1107,26 @@ class Handler(BaseHTTPRequestHandler):
             raw_body = self.rfile.read(length).decode('utf-8', errors='replace') if length else ''
             ctype = (self.headers.get('Content-Type') or '').lower()
             pat = ''
+            url_in = ''
             if 'application/x-www-form-urlencoded' in ctype:
-                pat = (urllib.parse.parse_qs(raw_body).get('pat') or [''])[0].strip()
+                form = urllib.parse.parse_qs(raw_body)
+                pat = (form.get('pat') or [''])[0].strip()
+                url_in = (form.get('url') or [''])[0].strip()
             elif 'application/json' in ctype:
                 try:
-                    pat = (json.loads(raw_body) or {}).get('pat', '').strip()
+                    j = json.loads(raw_body) or {}
+                    pat = (j.get('pat') or '').strip()
+                    url_in = (j.get('url') or '').strip()
                 except Exception:
                     pat = ''
             if not pat:
                 _redirect(self, '/login?error=PAT+is+required')
                 return
+            # The Plane URL selects the instance (cloud or self-hosted); the
+            # workspace is chosen in-app afterwards. Point Plane calls at that
+            # instance for this request so the PAT is validated against it.
+            global _active_api_base
+            _active_api_base = derive_api_base(url_in)
             try:
                 info = fetch_plane_user(pat)
             except urllib.error.HTTPError as e:
@@ -980,7 +1134,7 @@ class Handler(BaseHTTPRequestHandler):
                 _redirect(self, f'/login?error=Plane+rejected+the+PAT+({code})')
                 return
             except Exception as e:
-                _redirect(self, f'/login?error={urllib.parse.quote(("plane: " + str(e))[:120])}')
+                _redirect(self, f'/login?error={urllib.parse.quote(("could not reach " + _active_api_base + ": " + str(e))[:140])}')
                 return
             email = (info.get('email') or '').strip().lower()
             if not email:
@@ -992,7 +1146,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             user_id = (info.get('id') or '').strip()
             display_name = _resolve_display_name(info)
-            session = make_session_token(email, pat, user_id, display_name)
+            # Preserve workspaces remembered in a still-valid prior session cookie
+            # (same email AND same instance), so re-logging in doesn't wipe the dropdown.
+            _e, _p, _u, _n, prior, prior_base = _session(self)
+            remembered = prior if (prior and _e == email and prior_base == _active_api_base) else []
+            session = make_session_token(email, pat, user_id, display_name, remembered=remembered, api_base=_active_api_base)
             set_session = _cookie_header(SESSION_COOKIE, session, max_age=SESSION_TTL_SECONDS)
             _redirect(self, '/', set_cookies=[set_session])
             return
@@ -1000,9 +1158,39 @@ class Handler(BaseHTTPRequestHandler):
         auth = self._require_auth(raw_path)
         if auth is None:
             return
-        _email, api_key = auth
+        _email, api_key, remembered = auth
+
+        # Add a workspace: validate the PAT can reach it, then remember it.
+        if raw_path == '/api/workspaces/add':
+            if not auth_enabled():
+                self._send_json({'error': 'workspace switching needs per-user auth'}, 400)
+                return
+            length = int(self.headers.get('Content-Length', 0) or 0)
+            try:
+                body = json.loads(self.rfile.read(length).decode()) if length else {}
+            except Exception:
+                self._send_json({'error': 'invalid JSON body'}, 400)
+                return
+            new_slug = parse_workspace_slug(body.get('url') or body.get('workspace') or '')
+            if not new_slug:
+                self._send_json({'error': 'a workspace URL or slug is required'}, 400)
+                return
+            try:
+                fetch_projects(new_slug, api_key)
+            except Exception:
+                self._send_json({'error': f'this token cannot access workspace "{new_slug}" — check the URL and your membership'}, 403)
+                return
+            email, pat, user_id, name, _r, _ab = _session(self)
+            updated = [new_slug] + [s for s in (remembered or []) if s != new_slug]
+            fresh = make_session_token(email, pat, user_id, name, remembered=updated)
+            # Persist the updated remembered-list in the session cookie (emitted by
+            # _send_json via the renew slot, overriding the sliding-session renewal).
+            self._renew_cookie = _cookie_header(SESSION_COOKIE, fresh, max_age=SESSION_TTL_SECONDS)
+            self._send_json({'ok': True, 'workspace_slug': new_slug, 'workspaces': updated})
+            return
 
         path, pid = self._query_project_id()
+        slug = self._workspace(remembered)
         if path == '/api/work-item':
             length = int(self.headers.get('Content-Length', 0))
             try:
@@ -1026,7 +1214,7 @@ class Handler(BaseHTTPRequestHandler):
             if not patch:
                 self._send_json({'error': 'empty patch'}, 400)
                 return
-            api_path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/work-items/{item_id}/'
+            api_path = f'workspaces/{slug}/projects/{project_id}/work-items/{item_id}/'
             try:
                 result = plane_patch(api_path, patch, api_key=api_key)
                 self._send_json({'ok': True, 'item': result})
@@ -1046,7 +1234,7 @@ class Handler(BaseHTTPRequestHandler):
             if not item_id or not comment_html:
                 self._send_json({'error': 'item_id and comment_html required'}, 400)
                 return
-            api_path = f'workspaces/{PLANE_WORKSPACE_SLUG}/projects/{project_id}/work-items/{item_id}/comments/'
+            api_path = f'workspaces/{slug}/projects/{project_id}/work-items/{item_id}/comments/'
             try:
                 result = plane_post(api_path, {'comment_html': comment_html}, api_key=api_key)
                 self._send_json({'ok': True, 'comment': result})
@@ -1057,22 +1245,23 @@ class Handler(BaseHTTPRequestHandler):
             if not pid:
                 self._send_json({'error': 'project_id is required'}, 400)
                 return
-            if _refresh_state['in_progress']:
-                self._send_json({'error': 'refresh already in progress', 'state': _refresh_state}, 409)
+            st = refresh_state_for(slug, pid)
+            if st['in_progress']:
+                self._send_json({'error': 'refresh already in progress', 'state': st}, 409)
                 return
             with _refresh_lock:
-                _refresh_state['in_progress'] = True
-                _refresh_state['last_error'] = None
-                _refresh_state['pages_fetched'] = 0
+                st['in_progress'] = True
+                st['last_error'] = None
+                st['pages_fetched'] = 0
                 try:
-                    data = do_refresh(pid, api_key=api_key)
-                    _refresh_state['last_run'] = data['_meta']['last_refreshed_at']
+                    data = do_refresh(pid, slug, api_key=api_key, state=st)
+                    st['last_run'] = data['_meta']['last_refreshed_at']
                     self._send_json({'ok': True, 'meta': data['_meta']})
                 except Exception as e:
-                    _refresh_state['last_error'] = str(e)
-                    self._send_json({'error': str(e), 'state': _refresh_state}, 500)
+                    st['last_error'] = str(e)
+                    self._send_json({'error': str(e), 'state': st}, 500)
                 finally:
-                    _refresh_state['in_progress'] = False
+                    st['in_progress'] = False
             return
         self.send_error(404)
 
@@ -1081,22 +1270,25 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    if not PLANE_WORKSPACE_SLUG:
-        print('!! PLANE_WORKSPACE_SLUG not set. Find the slug in your Plane URL: app.plane.so/<slug>/...')
-        sys.exit(1)
-    if not auth_enabled() and not PLANE_API_KEY:
-        print('!! No auth and no PLANE_API_KEY. Either set SESSION_SECRET (per-user PAT login)')
-        print('   or set PLANE_API_KEY (single-user local dev). See README.md.')
-        sys.exit(1)
+    # With per-user auth the workspace is chosen at login, so PLANE_WORKSPACE_SLUG
+    # is only required for the no-auth single-user mode.
+    if not auth_enabled():
+        if not PLANE_WORKSPACE_SLUG:
+            print('!! No auth and no PLANE_WORKSPACE_SLUG. Set SESSION_SECRET for per-user login')
+            print('   (workspace chosen at sign-in), or set PLANE_WORKSPACE_SLUG for single-user mode.')
+            sys.exit(1)
+        if not PLANE_API_KEY:
+            print('!! No auth and no PLANE_API_KEY. Either set SESSION_SECRET (per-user PAT login)')
+            print('   or set PLANE_API_KEY (single-user local dev). See README.md.')
+            sys.exit(1)
+    migrate_flat_data_files()
     print(f'Dashboard server listening on {HOST}:{PORT}', flush=True)
-    print(f'  Workspace: {PLANE_WORKSPACE_SLUG}')
-    print(f'  Project:   {PLANE_PROJECT_ID}')
     print(f'  Window:    last {WINDOW_DAYS} days')
     if auth_enabled():
-        print(f'  Auth:      Plane PAT login (domains: {", ".join(ALLOWED_EMAIL_DOMAINS)})')
+        print(f'  Auth:      Plane PAT login — workspace chosen at sign-in (domains: {", ".join(ALLOWED_EMAIL_DOMAINS)})')
     else:
-        print('  Auth:      DISABLED — using shared PLANE_API_KEY from .env. Set SESSION_SECRET to require login.')
-    print(f'  Open the URL in your browser, then click Refresh.')
+        print(f'  Workspace: {PLANE_WORKSPACE_SLUG} (single-user, shared PLANE_API_KEY; set SESSION_SECRET for per-user login)')
+    print(f'  Open the URL in your browser, then sign in.')
     HTTPServer((HOST, PORT), Handler).serve_forever()
 
 

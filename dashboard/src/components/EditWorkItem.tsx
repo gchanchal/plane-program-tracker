@@ -78,7 +78,7 @@ export function EditWorkItem({ item, variant = 'icon', className }: Props) {
 }
 
 export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => void }) {
-  const { currentProjectId, refresh, data } = useDashboard();
+  const { currentProjectId, workspaceSlug, refresh, data } = useDashboard();
   const [priority, setPriority] = useState<Priority>(item.priority);
   const [start, setStart] = useState(item.start || '');
   const [end, setEnd] = useState(item.end || '');
@@ -117,7 +117,7 @@ export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => vo
     setCommentsLoading(true);
     setCommentsErr(null);
     try {
-      const list = await api.listComments(currentProjectId, item.id);
+      const list = await api.listComments(workspaceSlug!, currentProjectId, item.id);
       list.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
       setComments(list);
     } catch (e) {
@@ -170,7 +170,7 @@ export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => vo
     setSaving(true);
     setMsg(null);
     try {
-      await api.patchWorkItem(currentProjectId, item.id, patch);
+      await api.patchWorkItem(workspaceSlug!, currentProjectId, item.id, patch);
       setMsg({ kind: 'ok', text: 'Saved. Refreshing…' });
       await refresh();
       onClose();
@@ -188,7 +188,7 @@ export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => vo
     setPosting(true);
     setMsg(null);
     try {
-      await api.addComment(currentProjectId, item.id, html);
+      await api.addComment(workspaceSlug!, currentProjectId, item.id, html);
       setMsg({ kind: 'ok', text: 'Comment posted.' });
       setComment('');
       fetchComments();

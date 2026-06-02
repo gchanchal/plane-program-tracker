@@ -13,19 +13,23 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+// All workspace-scoped calls carry ?workspace=<slug>; the server validates it
+// against the workspaces the session has added.
+const ws = (s: string) => `workspace=${encodeURIComponent(s)}`;
+
 export const api = {
-  projects(): Promise<ProjectsResponse> {
-    return jsonFetch('/api/projects', { cache: 'no-store' });
+  projects(workspace: string): Promise<ProjectsResponse> {
+    return jsonFetch(`/api/projects?${ws(workspace)}`, { cache: 'no-store' });
   },
 
-  data(projectId: string): Promise<DashboardData> {
-    return jsonFetch(`/api/data?project_id=${encodeURIComponent(projectId)}`, { cache: 'no-store' });
+  data(workspace: string, projectId: string): Promise<DashboardData> {
+    return jsonFetch(`/api/data?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}`, { cache: 'no-store' });
   },
 
-  async history(projectId: string): Promise<HistorySnapshot[]> {
+  async history(workspace: string, projectId: string): Promise<HistorySnapshot[]> {
     try {
       const body = await jsonFetch<{ history?: HistorySnapshot[] }>(
-        `/api/history?project_id=${encodeURIComponent(projectId)}`,
+        `/api/history?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}`,
         { cache: 'no-store' }
       );
       return body.history || [];
@@ -34,35 +38,44 @@ export const api = {
     }
   },
 
-  refresh(projectId: string): Promise<unknown> {
-    return jsonFetch(`/api/refresh?project_id=${encodeURIComponent(projectId)}`, { method: 'POST' });
+  refresh(workspace: string, projectId: string): Promise<unknown> {
+    return jsonFetch(`/api/refresh?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}`, { method: 'POST' });
   },
 
-  patchWorkItem(projectId: string, itemId: string, patch: Record<string, unknown>): Promise<unknown> {
-    return jsonFetch('/api/work-item', {
+  patchWorkItem(workspace: string, projectId: string, itemId: string, patch: Record<string, unknown>): Promise<unknown> {
+    return jsonFetch(`/api/work-item?${ws(workspace)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_id: projectId, item_id: itemId, patch }),
     });
   },
 
-  addComment(projectId: string, itemId: string, commentHtml: string): Promise<unknown> {
-    return jsonFetch('/api/work-item-comment', {
+  addComment(workspace: string, projectId: string, itemId: string, commentHtml: string): Promise<unknown> {
+    return jsonFetch(`/api/work-item-comment?${ws(workspace)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_id: projectId, item_id: itemId, comment_html: commentHtml }),
     });
   },
 
-  async listComments(projectId: string, itemId: string): Promise<WorkItemComment[]> {
+  async listComments(workspace: string, projectId: string, itemId: string): Promise<WorkItemComment[]> {
     const body = await jsonFetch<{ comments?: WorkItemComment[] }>(
-      `/api/work-item-comments?project_id=${encodeURIComponent(projectId)}&item_id=${encodeURIComponent(itemId)}`,
+      `/api/work-item-comments?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}&item_id=${encodeURIComponent(itemId)}`,
       { cache: 'no-store' },
     );
     return body.comments || [];
   },
 
-  me(): Promise<{ email: string | null; user_id: string | null; display_name: string | null; auth_enabled: boolean }> {
+  /** Validate + remember a workspace (by URL or slug). Returns the updated list. */
+  addWorkspace(url: string): Promise<{ ok: boolean; workspace_slug: string; workspaces: string[] }> {
+    return jsonFetch('/api/workspaces/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+  },
+
+  me(): Promise<{ email: string | null; user_id: string | null; display_name: string | null; workspaces: string[]; workspace_slug: string; auth_enabled: boolean }> {
     return jsonFetch('/api/me', { cache: 'no-store' });
   },
 };

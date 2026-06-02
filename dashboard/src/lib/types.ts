@@ -117,6 +117,7 @@ export interface ProjectSummary {
 export interface ProjectsResponse {
   projects: ProjectSummary[];
   default_project_id?: string;
+  workspace_slug?: string;
 }
 
 export interface HistorySnapshot {

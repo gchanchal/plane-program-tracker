@@ -7,28 +7,34 @@ export type TabKey = 'pulse' | 'roadmap' | 'mywork' | 'action' | 'due' | 'capaci
 
 export interface TabDef {
   key: TabKey;
-  path: string;
+  /** URL segment for this tab (no slashes). Full URL is /<workspace>/<segment>. */
+  segment: string;
   label: string;
   Icon: typeof Activity;
 }
 
 export const TABS: TabDef[] = [
-  { key: 'pulse',    path: '/pulse',         label: 'Pulse',         Icon: Activity },
-  { key: 'roadmap',  path: '/roadmap',       label: 'Roadmap',       Icon: MapIcon },
-  { key: 'mywork',   path: '/my-work',       label: 'My Work',       Icon: UserCircle2 },
-  { key: 'action',   path: '/action-center', label: 'Action Center', Icon: CheckSquare },
-  { key: 'due',      path: '/due-work',      label: 'Due Work',      Icon: CalendarClock },
-  { key: 'capacity', path: '/capacity',      label: 'Capacity',      Icon: Users },
-  { key: 'flow',     path: '/flow',          label: 'Flow',          Icon: TrendingUp },
-  { key: 'explorer', path: '/explorer',      label: 'Explorer',      Icon: ListTree },
+  { key: 'pulse',    segment: 'pulse',         label: 'Pulse',         Icon: Activity },
+  { key: 'roadmap',  segment: 'roadmap',       label: 'Roadmap',       Icon: MapIcon },
+  { key: 'mywork',   segment: 'my-work',       label: 'My Work',       Icon: UserCircle2 },
+  { key: 'action',   segment: 'action-center', label: 'Action Center', Icon: CheckSquare },
+  { key: 'due',      segment: 'due-work',      label: 'Due Work',      Icon: CalendarClock },
+  { key: 'capacity', segment: 'capacity',      label: 'Capacity',      Icon: Users },
+  { key: 'flow',     segment: 'flow',          label: 'Flow',          Icon: TrendingUp },
+  { key: 'explorer', segment: 'explorer',      label: 'Explorer',      Icon: ListTree },
 ];
 
 export const DEFAULT_TAB: TabKey = 'pulse';
 
-export function pathForKey(key: TabKey): string {
-  return TABS.find(t => t.key === key)?.path ?? TABS[0].path;
+export function segmentForKey(key: TabKey): string {
+  return TABS.find(t => t.key === key)?.segment ?? TABS[0].segment;
 }
 
-export function keyForPath(path: string): TabKey | undefined {
-  return TABS.find(t => t.path === path)?.key;
+export function keyForSegment(segment: string): TabKey | undefined {
+  return TABS.find(t => t.segment === segment)?.key;
+}
+
+/** Full app URL for a tab within a workspace, e.g. tabUrl('acme', 'roadmap') -> /acme/roadmap */
+export function tabUrl(workspace: string, key: TabKey): string {
+  return `/${workspace}/${segmentForKey(key)}`;
 }

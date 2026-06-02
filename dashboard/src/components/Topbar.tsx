@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight, RefreshCw, Download, LogOut } from 'lucide-react';
+import { WorkspacePicker } from './WorkspacePicker';
 import { ProjectPicker } from './ProjectPicker';
 import { ThemeToggle } from './ThemeToggle';
 import { useDashboard } from '@/lib/dashboard-context';
@@ -41,6 +42,8 @@ export function Topbar() {
           </svg>
           <span className="brand-text">Plane</span>
         </a>
+        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        <WorkspacePicker />
         <ChevronRight className="h-4 w-4 text-muted-foreground" />
         <ProjectPicker />
       </span>

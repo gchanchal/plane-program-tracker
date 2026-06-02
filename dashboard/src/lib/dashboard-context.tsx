@@ -6,6 +6,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './api';
 import { computeActions } from './actions';
 import { STORAGE_KEYS } from './constants';
@@ -18,6 +19,12 @@ type LoadStatus = 'idle' | 'loading' | 'fetching' | 'ready' | 'error';
 interface DashboardContextValue {
   status: LoadStatus;
   errorMsg: string | null;
+  /** Workspaces the user has added (most-recent first). null until /api/me resolves. */
+  workspaces: string[] | null;
+  /** Active workspace — taken from the URL's first path segment. */
+  workspaceSlug: string | null;
+  /** Validate + remember a workspace (URL or slug), then navigate into it. */
+  addWorkspace: (urlOrSlug: string) => Promise<void>;
   projects: ProjectSummary[];
   currentProjectId: string | null;
   setCurrentProjectId: (id: string) => void;
@@ -49,6 +56,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<LoadStatus>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [workspaces, setWorkspaces] = useState<string[] | null>(null);
   const [currentProjectId, setCurrentProjectIdState] = useState<string | null>(null);
   const [rawData, setRawData] = useState<DashboardData | null>(null);
   const [history, setHistory] = useState<HistorySnapshot[]>([]);
@@ -56,37 +64,54 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [windowDays, setWindowDays] = useState<number>(0); // 0 = use server max
   const inflightId = useRef<string | null>(null);
 
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Active workspace = first path segment, e.g. /acme/roadmap -> "acme". Null at "/".
+  const workspaceSlug = location.pathname.split('/').filter(Boolean)[0] || null;
+  const activeValid = !!workspaceSlug && !!workspaces?.includes(workspaceSlug);
+
   const setCurrentProjectId = useCallback((id: string) => {
     setCurrentProjectIdState(id);
     try { localStorage.setItem(STORAGE_KEYS.project, id); } catch { /* ignore */ }
   }, []);
 
-  // Bootstrap: load /api/projects, decide which project to open.
+  // Bootstrap: load the remembered workspaces list (the active one comes from the URL).
   useEffect(() => {
     (async () => {
-      setStatus('loading');
       try {
-        const body = await api.projects();
+        const me = await api.me();
+        setWorkspaces(me.workspaces || []);
+      } catch {
+        setWorkspaces([]);
+      }
+    })();
+  }, []);
+
+  // Load projects for the active workspace, then pick a project.
+  useEffect(() => {
+    if (!activeValid || !workspaceSlug) { setProjects([]); setCurrentProjectIdState(null); return; }
+    let cancelled = false;
+    (async () => {
+      setStatus('loading');
+      setErrorMsg(null);
+      try {
+        const body = await api.projects(workspaceSlug);
+        if (cancelled) return;
         const list = body.projects || [];
         setProjects(list);
-        const saved = (() => {
-          try { return localStorage.getItem(STORAGE_KEYS.project); } catch { return null; }
-        })();
+        const saved = (() => { try { return localStorage.getItem(STORAGE_KEYS.project); } catch { return null; } })();
         let pick: string | null = null;
         if (saved && list.some(p => p.id === saved)) pick = saved;
         else if (body.default_project_id && list.some(p => p.id === body.default_project_id)) pick = body.default_project_id;
         else if (list.length) pick = list[0].id;
-        if (!pick) {
-          setStatus('ready');
-          return;
-        }
         setCurrentProjectIdState(pick);
+        if (!pick) setStatus('ready');
       } catch (e) {
-        setErrorMsg((e as Error).message);
-        setStatus('error');
+        if (!cancelled) { setErrorMsg((e as Error).message); setStatus('error'); }
       }
     })();
-  }, []);
+    return () => { cancelled = true; };
+  }, [workspaceSlug, activeValid]);
 
   // Load cached data + history when currentProjectId changes.
   //
@@ -101,18 +126,19 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   // Beyond that, refreshes from Plane only happen when the user clicks the
   // Refresh button (the `refresh` callback below).
   useEffect(() => {
-    if (!currentProjectId) return;
-    inflightId.current = currentProjectId;
+    if (!currentProjectId || !workspaceSlug) return;
+    const token = `${workspaceSlug}:${currentProjectId}`;
+    inflightId.current = token;
     (async () => {
       setStatus('loading');
       setErrorMsg(null);
       setRawData(null);
       setHistory([]);
       try {
-        const d = await api.data(currentProjectId);
-        if (inflightId.current !== currentProjectId) return;
-        const h = await api.history(currentProjectId);
-        if (inflightId.current !== currentProjectId) return;
+        const d = await api.data(workspaceSlug, currentProjectId);
+        if (inflightId.current !== token) return;
+        const h = await api.history(workspaceSlug, currentProjectId);
+        if (inflightId.current !== token) return;
         setRawData(d);
         setHistory(h);
         setStatus('ready');
@@ -120,12 +146,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         // Cache miss — first encounter with this project. Pull from Plane.
         setStatus('fetching');
         try {
-          await api.refresh(currentProjectId);
-          if (inflightId.current !== currentProjectId) return;
-          const d = await api.data(currentProjectId);
-          if (inflightId.current !== currentProjectId) return;
-          const h = await api.history(currentProjectId);
-          if (inflightId.current !== currentProjectId) return;
+          await api.refresh(workspaceSlug, currentProjectId);
+          if (inflightId.current !== token) return;
+          const d = await api.data(workspaceSlug, currentProjectId);
+          if (inflightId.current !== token) return;
+          const h = await api.history(workspaceSlug, currentProjectId);
+          if (inflightId.current !== token) return;
           setRawData(d);
           setHistory(h);
           setStatus('ready');
@@ -135,15 +161,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         }
       }
     })();
-  }, [currentProjectId]);
+  }, [currentProjectId, workspaceSlug]);
 
   const refresh = useCallback(async () => {
-    if (!currentProjectId) return;
+    if (!currentProjectId || !workspaceSlug) return;
     setRefreshing(true);
     try {
-      await api.refresh(currentProjectId);
-      const d = await api.data(currentProjectId);
-      const h = await api.history(currentProjectId);
+      await api.refresh(workspaceSlug, currentProjectId);
+      const d = await api.data(workspaceSlug, currentProjectId);
+      const h = await api.history(workspaceSlug, currentProjectId);
       setRawData(d);
       setHistory(h);
     } catch (e) {
@@ -151,7 +177,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } finally {
       setRefreshing(false);
     }
-  }, [currentProjectId]);
+  }, [currentProjectId, workspaceSlug]);
+
+  const addWorkspace = useCallback(async (urlOrSlug: string) => {
+    const res = await api.addWorkspace(urlOrSlug);
+    setWorkspaces(res.workspaces);
+    navigate(`/${res.workspace_slug}`);
+  }, [navigate]);
 
   const currentProject = useMemo(
     () => projects.find(p => p.id === currentProjectId) || null,
@@ -211,7 +243,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [currentProject]);
 
   const value: DashboardContextValue = {
-    status, errorMsg, projects, currentProjectId, setCurrentProjectId,
+    status, errorMsg, workspaces, workspaceSlug, addWorkspace,
+    projects, currentProjectId, setCurrentProjectId,
     currentProject, data, rawData, history, actions, refresh, refreshing,
     windowDays: effectiveWindow, setWindowDays, maxWindowDays,
   };

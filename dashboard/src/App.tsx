@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { ChevronDown, Check } from 'lucide-react';
 import { DashboardProvider, useDashboard } from '@/lib/dashboard-context';
-import { DEFAULT_TAB, pathForKey, keyForPath, type TabKey } from '@/lib/tabs';
+import { DEFAULT_TAB, segmentForKey, keyForSegment, tabUrl, type TabKey } from '@/lib/tabs';
 import { STORAGE_KEYS } from '@/lib/constants';
 import { Topbar } from '@/components/Topbar';
 import { Tabs } from '@/components/Tabs';
@@ -109,30 +109,112 @@ function Footer() {
 function lastVisitedTab(): TabKey {
   try {
     const v = localStorage.getItem(STORAGE_KEYS.tab);
-    if (v && keyForPath(pathForKey(v as TabKey)) === v) return v as TabKey;
+    if (v && keyForSegment(segmentForKey(v as TabKey)) === v) return v as TabKey;
   } catch { /* ignore */ }
   return DEFAULT_TAB;
 }
 
+// Empty state when the user hasn't added any workspace yet.
+function AddWorkspacePrompt() {
+  const { addWorkspace } = useDashboard();
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const submit = async () => {
+    if (!url.trim() || busy) return;
+    setBusy(true); setErr(null);
+    try { await addWorkspace(url.trim()); }
+    catch (e) { setErr((e as Error).message || 'Could not add workspace'); setBusy(false); }
+  };
+  return (
+    <div className="max-w-md mx-auto mt-16 text-center">
+      <h2 className="text-lg font-semibold mb-1">Add a workspace</h2>
+      <p className="text-sm text-muted-foreground mb-4">Paste the URL of a Plane workspace you belong to.</p>
+      <div className="flex gap-2">
+        <input
+          type="text" value={url} autoFocus
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          placeholder="app.plane.so/your-workspace"
+          className="flex-1 px-3 py-2 text-sm rounded-md border border-border bg-card outline-none focus:border-ring"
+        />
+        <button type="button" onClick={submit} disabled={busy || !url.trim()}
+          className="px-3 py-2 text-sm rounded-md bg-foreground text-background disabled:opacity-50">
+          {busy ? 'Adding…' : 'Add'}
+        </button>
+      </div>
+      {err && <div className="mt-2 text-sm text-red-600 dark:text-red-400">{err}</div>}
+    </div>
+  );
+}
+
+// "/" → most-recent workspace's last tab, or the add-workspace prompt if none.
+function HomeRedirect({ workspaces }: { workspaces: string[] | null }) {
+  if (workspaces === null) return null;       // remembered list not loaded yet
+  if (!workspaces.length) return <AddWorkspacePrompt />;
+  return <Navigate to={tabUrl(workspaces[0], lastVisitedTab())} replace />;
+}
+
+// "/:ws" (no tab) → that workspace's last tab (if remembered), else home.
+function WsIndex({ workspaces }: { workspaces: string[] | null }) {
+  const { ws } = useParams();
+  if (workspaces === null) return null;
+  if (ws && workspaces.includes(ws)) return <Navigate to={tabUrl(ws, lastVisitedTab())} replace />;
+  return <HomeRedirect workspaces={workspaces} />;
+}
+
+// Resolves /:ws/:tab. The URL's workspace must be one the user has added; if not,
+// fall back to the most-recent workspace (or the add prompt). Unknown tab → default.
+function TabResolver({ workspaces, viewFor }: {
+  workspaces: string[] | null;
+  viewFor: (key: TabKey) => ReactNode;
+}) {
+  const { ws, tab } = useParams();
+  if (workspaces === null) return null; // remembered list not loaded yet
+  if (!ws || !workspaces.includes(ws)) {
+    if (!workspaces.length) return <AddWorkspacePrompt />;
+    const key = (tab && keyForSegment(tab)) || DEFAULT_TAB;
+    return <Navigate to={tabUrl(workspaces[0], key)} replace />;
+  }
+  const key = tab ? keyForSegment(tab) : undefined;
+  if (!key) return <Navigate to={tabUrl(ws, lastVisitedTab())} replace />;
+  return <>{viewFor(key)}</>;
+}
+
 function Inner() {
-  const { data } = useDashboard();
+  const { data, workspaces, workspaceSlug } = useDashboard();
   const navigate = useNavigate();
   const location = useLocation();
   const [jumpKey, setJumpKey] = useState<ActionBucketKey | null>(null);
 
-  // Remember the active tab so a later visit to "/" reopens it.
+  // Remember the active tab (2nd path segment) so a later visit to "/" reopens it.
   useEffect(() => {
-    const key = keyForPath(location.pathname);
+    const seg = location.pathname.split('/').filter(Boolean)[1];
+    const key = seg ? keyForSegment(seg) : undefined;
     if (key) { try { localStorage.setItem(STORAGE_KEYS.tab, key); } catch { /* ignore */ } }
   }, [location.pathname]);
 
   const onJump = (k: ActionBucketKey) => {
-    navigate(pathForKey('action'));
+    if (workspaceSlug) navigate(tabUrl(workspaceSlug, 'action'));
     setJumpKey(k);
     setTimeout(() => {
       const el = document.getElementById('bucket-' + k);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 80);
+  };
+
+  const viewFor = (key: TabKey): ReactNode => {
+    if (!data) return null;
+    switch (key) {
+      case 'pulse':    return <PulseView onJump={onJump} />;
+      case 'roadmap':  return <RoadmapTimeline />;
+      case 'mywork':   return <MyWorkView onJump={onJump} />;
+      case 'action':   return <ActionCenterView jumpKey={jumpKey} />;
+      case 'due':      return <DueWorkView />;
+      case 'capacity': return <CapacityView />;
+      case 'flow':     return <FlowView />;
+      case 'explorer': return <ExplorerView />;
+    }
   };
 
   return (
@@ -142,16 +224,10 @@ function Inner() {
       <Tabs />
       <div className="py-4">
         <Routes>
-          <Route path="/" element={<Navigate to={pathForKey(lastVisitedTab())} replace />} />
-          <Route path="/pulse"         element={data ? <PulseView onJump={onJump} /> : null} />
-          <Route path="/roadmap"       element={data ? <RoadmapTimeline /> : null} />
-          <Route path="/my-work"       element={data ? <MyWorkView onJump={onJump} /> : null} />
-          <Route path="/action-center" element={data ? <ActionCenterView jumpKey={jumpKey} /> : null} />
-          <Route path="/due-work"      element={data ? <DueWorkView /> : null} />
-          <Route path="/capacity"      element={data ? <CapacityView /> : null} />
-          <Route path="/flow"          element={data ? <FlowView /> : null} />
-          <Route path="/explorer"      element={data ? <ExplorerView /> : null} />
-          <Route path="*" element={<Navigate to={pathForKey(DEFAULT_TAB)} replace />} />
+          <Route path="/" element={<HomeRedirect workspaces={workspaces} />} />
+          <Route path="/:ws" element={<WsIndex workspaces={workspaces} />} />
+          <Route path="/:ws/:tab" element={<TabResolver workspaces={workspaces} viewFor={viewFor} />} />
+          <Route path="*" element={<HomeRedirect workspaces={workspaces} />} />
         </Routes>
       </div>
       <Footer />

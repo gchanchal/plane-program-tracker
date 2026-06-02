@@ -195,7 +195,7 @@ function DueColumn({ title, subtitle, count, tone, children, empty, onDropItem, 
  * so the card relocates to the correct column automatically.
  */
 function QuickDueDate({ item, onSaved }: { item: WorkItem; onSaved?: (date: string) => void }) {
-  const { currentProjectId } = useDashboard();
+  const { currentProjectId, workspaceSlug } = useDashboard();
   const inputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -214,7 +214,7 @@ function QuickDueDate({ item, onSaved }: { item: WorkItem; onSaved?: (date: stri
     setSaving(true);
     setErr(null);
     try {
-      await api.patchWorkItem(currentProjectId, item.id, { target_date: date });
+      await api.patchWorkItem(workspaceSlug!, currentProjectId, item.id, { target_date: date });
       // Optimistic update via parent override map; the caller will sync
       // from Plane when they're done editing (avoids per-PATCH refresh
       // which would hit the 60/min rate limit).
@@ -417,7 +417,7 @@ const sortByUrgency = (a: WorkItem, b: WorkItem) => {
 };
 
 export function DueWorkView() {
-  const { data, currentProject, currentProjectId, refresh, refreshing } = useDashboard();
+  const { data, currentProject, currentProjectId, workspaceSlug, refresh, refreshing } = useDashboard();
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [dropMsg, setDropMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   // Local optimistic overrides for items whose target_date we just PATCHed.
@@ -559,7 +559,7 @@ export function DueWorkView() {
     if ((current.end || null) === targetDate) return;
     setDropMsg(null);
     try {
-      await api.patchWorkItem(currentProjectId, itemId, { target_date: targetDate });
+      await api.patchWorkItem(workspaceSlug!, currentProjectId, itemId, { target_date: targetDate });
       // Apply optimistic override so the card relocates without a full
       // refresh (which would cost ~12 Plane API calls per drop and hit
       // the 60/min rate limit after a few drags).

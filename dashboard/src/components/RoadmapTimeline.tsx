@@ -142,7 +142,7 @@ function getRange(scale: Scale, todayIso: string): Range {
 }
 
 export function RoadmapTimeline() {
-  const { data, currentProjectId, currentProject, refresh } = useDashboard();
+  const { data, currentProjectId, workspaceSlug, currentProject, refresh } = useDashboard();
   const projectIdent = currentProject?.identifier || '';
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [scale, setScale] = useState<Scale>('month');
@@ -370,7 +370,7 @@ export function RoadmapTimeline() {
       if ('end'   in edit) patch.target_date = edit.end ?? null;
       if (Object.keys(patch).length === 0) continue;
       try {
-        await api.patchWorkItem(currentProjectId, itemId, patch);
+        await api.patchWorkItem(workspaceSlug!, currentProjectId, itemId, patch);
       } catch (e) {
         failures.push(`${itemId.slice(0, 6)}: ${(e as Error).message}`);
       }
