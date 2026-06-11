@@ -17,9 +17,8 @@ export function DueChangesPill({ item, className }: { item: WorkItem; className?
 
   const dates = item.due_dates ?? [];
   const chain = dates.map(d => fmtShortDate(d)).join(' → ');
-  const moves = count - 1;
-  const title =
-    `${count} due dates (rescheduled ${moves}×)` + (chain ? `: ${chain}` : '');
+  // due_dates is the set of DISTINCT deadlines this item has had.
+  const title = `${count} distinct due dates` + (chain ? `: ${chain}` : '');
 
   return (
     <span className={'wi-due-pill' + (className ? ' ' + className : '')} title={title}>
