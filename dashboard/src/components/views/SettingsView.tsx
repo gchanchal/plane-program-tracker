@@ -5,8 +5,10 @@
  * delta. (A delta refresh reuses the raw cache; a full one re-pulls the window.)
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Trash2, RefreshCw, Database, AlertTriangle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Trash2, RefreshCw, Database, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useDashboard } from '@/lib/dashboard-context';
 import type { CacheEntry } from '@/lib/types';
 
 function fmtBytes(n: number): string {
@@ -24,9 +26,18 @@ function fmtWhen(iso?: string | null): string {
 }
 
 export function SettingsView() {
+  const navigate = useNavigate();
+  const { workspaceSlug } = useDashboard();
   const [entries, setEntries] = useState<CacheEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  const goBack = () => {
+    // Prefer the in-app history, but fall back to the workspace dashboard so a
+    // deep-link / fresh load doesn't leave the app.
+    if (window.history.length > 1) navigate(-1);
+    else navigate(workspaceSlug ? `/${workspaceSlug}` : '/');
+  };
 
   const load = useCallback(async () => {
     setErr(null);
@@ -66,6 +77,13 @@ export function SettingsView() {
 
   return (
     <div className="max-w-[1100px] mx-auto py-2">
+      <button
+        type="button"
+        onClick={goBack}
+        className="inline-flex items-center gap-1.5 mb-3 px-2.5 h-8 -ml-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+      >
+        <ArrowLeft className="h-4 w-4" /> Back to dashboard
+      </button>
       <div className="flex items-center gap-2 mb-1">
         <Database className="h-5 w-5 text-muted-foreground" />
         <h2 className="text-xl font-semibold tracking-tight">Cache &amp; data files</h2>
