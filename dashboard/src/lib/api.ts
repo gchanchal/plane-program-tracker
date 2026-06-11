@@ -1,6 +1,6 @@
 /** /api/* fetch wrappers. Mirrors static/js/api.js. */
 
-import type { DashboardData, HistorySnapshot, ProjectsResponse, WorkItemComment } from './types';
+import type { DashboardData, DueDateChanges, HistorySnapshot, ProjectsResponse, WorkItemComment } from './types';
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init);
@@ -42,6 +42,16 @@ export const api = {
     return jsonFetch(`/api/refresh?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}`, { method: 'POST' });
   },
 
+  /** Refresh state, incl. background due-date-history progress (due_history_*). */
+  status(workspace: string, projectId: string): Promise<{
+    in_progress?: boolean;
+    due_history_in_progress?: boolean;
+    due_history_done?: number;
+    due_history_total?: number;
+  }> {
+    return jsonFetch(`/api/status?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}`, { cache: 'no-store' });
+  },
+
   patchWorkItem(workspace: string, projectId: string, itemId: string, patch: Record<string, unknown>): Promise<unknown> {
     return jsonFetch(`/api/work-item?${ws(workspace)}`, {
       method: 'POST',
@@ -64,6 +74,14 @@ export const api = {
       { cache: 'no-store' },
     );
     return body.comments || [];
+  },
+
+  /** How many times an item's due date has been moved (from its Plane activity log). */
+  dueDateChanges(workspace: string, projectId: string, itemId: string): Promise<DueDateChanges> {
+    return jsonFetch(
+      `/api/work-item-activities?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}&item_id=${encodeURIComponent(itemId)}`,
+      { cache: 'no-store' },
+    );
   },
 
   /** Validate + remember a workspace (by URL or slug). Returns the updated list. */

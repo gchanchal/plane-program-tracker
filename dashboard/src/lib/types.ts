@@ -33,6 +33,10 @@ export interface WorkItem {
   labels?: WorkItemLabel[];
   description_html?: string;
   description_stripped?: string;
+  /** Number of distinct due dates this item has been assigned (>= 2 means rescheduled). Precomputed at refresh. */
+  due_count?: number;
+  /** Chronological list of every due date assigned, for the reschedule pill's tooltip. */
+  due_dates?: string[];
 }
 
 export interface StateGroupInfo {
@@ -80,6 +84,20 @@ export interface WorkItemComment {
   actor_detail?: { id: string; display_name?: string; first_name?: string; last_name?: string; avatar_url?: string };
   created_by?: string;
   created_by_detail?: { id: string; display_name?: string; first_name?: string; last_name?: string; avatar_url?: string };
+}
+
+export interface DueDateChange {
+  from: string;
+  to: string | null;
+  at?: string;
+}
+
+export interface DueDateChanges {
+  /** Number of distinct due dates assigned over time (>= 2 means rescheduled). */
+  due_count: number;
+  /** Chronological list of every due date assigned. */
+  due_dates: string[];
+  changes: DueDateChange[];
 }
 
 export interface DataMeta {

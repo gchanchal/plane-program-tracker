@@ -13,12 +13,13 @@
  * and the due date itself.
  */
 import { useMemo, useRef, useState } from 'react';
-import { CalendarPlus, ChevronDown, ChevronRight, AlertTriangle, X } from 'lucide-react';
+import { CalendarPlus, ChevronDown, ChevronRight, AlertTriangle, Search, X } from 'lucide-react';
 import { useDashboard } from '@/lib/dashboard-context';
 import { api } from '@/lib/api';
 import { PRIORITY_INFO, PRIORITY_RANK } from '@/lib/constants';
 import { daysBetween, fmtShortDate, planeItemUrl, prioCls, projectPrefix } from '@/lib/format';
 import { EditWorkItem } from '@/components/EditWorkItem';
+import { DueChangesPill } from '@/components/DueChangesPill';
 import { MultiSelectChip, type MultiSelectOption } from '@/components/MultiSelectChip';
 import type { Priority, WorkItem } from '@/lib/types';
 
@@ -281,7 +282,10 @@ function DueCard({ item, projIdent, meta, today, isMissing, onQuickDateSaved }: 
         {isMissing
           ? <span className="ml-auto"><QuickDueDate item={item} onSaved={(date) => onQuickDateSaved?.(item.id, date)} /></span>
           : item.end
-            ? <span className="due-card-due">Due {fmtShortDate(item.end)}</span>
+            ? <span className="ml-auto inline-flex items-center gap-1.5">
+                <DueChangesPill item={item} />
+                <span className="due-card-due">Due {fmtShortDate(item.end)}</span>
+              </span>
             : null}
       </div>
       <a href={url} target="_blank" rel="noopener" className="due-card-name">{item.name}</a>
@@ -419,6 +423,7 @@ const sortByUrgency = (a: WorkItem, b: WorkItem) => {
 export function DueWorkView() {
   const { data, currentProject, currentProjectId, workspaceSlug, refresh, refreshing } = useDashboard();
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [search, setSearch] = useState('');
   const [dropMsg, setDropMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   // Local optimistic overrides for items whose target_date we just PATCHed.
   // The cached `data` doesn't refresh per-drop (avoids hitting Plane's
@@ -440,10 +445,17 @@ export function DueWorkView() {
     });
   }, [data, overrides]);
 
-  const filteredItems = useMemo(
-    () => applyFilters(itemsWithOverrides, filters),
-    [itemsWithOverrides, filters],
-  );
+  const filteredItems = useMemo(() => {
+    const byFacets = applyFilters(itemsWithOverrides, filters);
+    const q = search.trim().toLowerCase();
+    if (!q) return byFacets;
+    const ident = projectPrefix(currentProject).toLowerCase();
+    return byFacets.filter(i =>
+      i.name.toLowerCase().includes(q) ||
+      String(i.seq).includes(q) ||
+      `${ident}-${i.seq}`.includes(q),
+    );
+  }, [itemsWithOverrides, filters, search, currentProject]);
 
   const activeFilterCount =
     filters.state.size + filters.priority.size + filters.type.size + filters.assignee.size + filters.label.size;
@@ -585,6 +597,33 @@ export function DueWorkView() {
 
   return (
     <div className="space-y-3">
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card">
+        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search this board by ID or title…"
+          className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+          aria-label="Search Due Work by ID or title"
+        />
+        {search && (
+          <>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {filteredItems.length} match{filteredItems.length === 1 ? '' : 'es'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="inline-flex items-center text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </>
+        )}
+      </div>
+
       <PastDueStrip items={buckets.pastDue} projIdent={projIdent} meta={meta} today={today} />
 
       {options && (

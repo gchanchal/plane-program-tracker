@@ -252,9 +252,18 @@ def plane_post(path: str, body: dict, api_key: str = None) -> dict:
         raise RuntimeError(f'Plane API {e.code} on POST {path}: {msg}') from None
 
 
-def plane_get(path: str, params=None, api_key: str = None) -> dict:
-    """GET against Plane REST API. Returns parsed JSON."""
-    url = f'{_active_api_base}/{path.lstrip("/")}'
+def plane_get(path: str, params=None, api_key: str = None, retries: int = 5, api_base: str = None) -> dict:
+    """GET against Plane REST API. Returns parsed JSON.
+
+    Retries on HTTP 429 (rate limit) with backoff, honoring Retry-After when the
+    server sends it. The bulk due-date-history pass makes many activity calls and
+    Plane's limiter is bursty, so transient 429s must be waited out, not dropped.
+
+    `api_base` pins the target instance for this call (defaults to the per-request
+    global); the background due-history thread passes it explicitly so a concurrent
+    request can't repoint its calls mid-run.
+    """
+    url = f'{(api_base or _active_api_base)}/{path.lstrip("/")}'
     if params:
         url += '?' + urllib.parse.urlencode(params)
     req = urllib.request.Request(
@@ -265,12 +274,28 @@ def plane_get(path: str, params=None, api_key: str = None) -> dict:
             'User-Agent': _DEFAULT_UA,
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors='ignore')[:500]
-        raise RuntimeError(f'Plane API {e.code} on {path}: {body}') from None
+    attempt = 0
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries:
+                retry_after = e.headers.get('Retry-After') if e.headers else None
+                try:
+                    wait = float(retry_after) if retry_after else 0
+                except ValueError:
+                    wait = 0
+                # Exponential backoff floor when no/short Retry-After is given,
+                # capped so a single item can't hold the due-history gate for long.
+                wait = min(max(wait, 2 ** attempt), 20)
+                print(f'  Plane 429 on {path}; backing off {wait:.0f}s '
+                      f'(attempt {attempt + 1}/{retries})', file=sys.stderr)
+                time.sleep(wait)
+                attempt += 1
+                continue
+            body = e.read().decode(errors='ignore')[:500]
+            raise RuntimeError(f'Plane API {e.code} on {path}: {body}') from None
 
 
 def fetch_projects(slug: str, api_key: str = None):
@@ -435,6 +460,179 @@ def fetch_members(slug: str, api_key: str = None):
     except Exception as e:
         print(f'  ! could not load members ({e}). Falling back to IDs.', file=sys.stderr)
         return {}
+
+
+def fetch_work_item_activities(project_id: str, item_id: str, slug: str, max_pages=10, api_key: str = None, api_base: str = None, retries: int = 4):
+    """Fetch a single work item's activity log (oldest-first).
+
+    Makes ONE request per page and only follows a *real* next_cursor. We never
+    synthesize a cursor: this endpoint can return a bare list of all activities,
+    and a synthetic cursor would re-request the same page, multiplying calls and
+    tripping the rate limiter.
+    """
+    path = f'workspaces/{slug}/projects/{project_id}/work-items/{item_id}/activities/'
+    all_rows, cursor, pages = [], None, 0
+    while pages < max_pages:
+        params = {'per_page': 100}
+        if cursor:
+            params['cursor'] = cursor
+        result = plane_get(path, params, api_key=api_key, api_base=api_base, retries=retries)
+        if isinstance(result, dict):
+            all_rows.extend(result.get('results') or result.get('items') or [])
+            cursor = result.get('next_cursor')
+        else:
+            all_rows.extend(result or [])
+            cursor = None
+        pages += 1
+        if not cursor:
+            break
+    return all_rows
+
+
+def due_date_changes(activities: list) -> dict:
+    """From a work item's activity log, summarize its due-date (target_date) history.
+
+    Returns {due_count, due_dates, changes} where:
+      - due_dates is the chronological list of every distinct due date the item
+        was assigned (the initial set IS included; consecutive duplicates and
+        clears are dropped).
+      - due_count = len(due_dates). A value >= 2 means the due date was moved at
+        least once.
+      - changes is the from->to chain (with timestamps) for a detailed tooltip.
+    """
+    def norm(v):
+        # Plane records an unset date as the string "None" (or null/empty).
+        if v is None:
+            return None
+        s = str(v).strip()
+        return None if s == '' or s.lower() == 'none' else s
+
+    entries = sorted(
+        (a for a in activities if a.get('field') == 'target_date' and a.get('verb') == 'updated'),
+        key=lambda a: a.get('created_at') or '',
+    )
+    due_dates = []
+    changes = []
+    for a in entries:
+        old = norm(a.get('old_value'))
+        new = norm(a.get('new_value'))
+        if old == new:
+            continue
+        changes.append({'from': old, 'to': new, 'at': a.get('created_at')})
+        # Track each real due date assigned, ignoring clears (new is None).
+        if new is not None and (not due_dates or due_dates[-1] != new):
+            due_dates.append(new)
+    return {'due_count': len(due_dates), 'due_dates': due_dates, 'changes': changes}
+
+
+# Due-date-history activity calls all pass through ONE global gate: only a single
+# such call is ever in flight, no matter how many projects refresh at once. The
+# delay between calls adapts to Plane's (bursty, sub-60/min) limiter — it grows on
+# 429 and eases back on success — so we never storm the user's real workspace.
+_due_rate = {
+    'gate': threading.Lock(),
+    'delay': 1.5,    # current seconds between activity calls
+    'min': 1.0,
+    'max': 30.0,
+}
+
+
+def _fetch_activities_paced(project_id, item_id, slug, api_key=None, api_base=None):
+    """Serialized + adaptively-throttled single-item activity fetch."""
+    with _due_rate['gate']:
+        time.sleep(_due_rate['delay'])
+        try:
+            rows = fetch_work_item_activities(project_id, item_id, slug, api_key=api_key, api_base=api_base)
+            _due_rate['delay'] = max(_due_rate['min'], _due_rate['delay'] * 0.9)
+            return rows
+        except RuntimeError as e:
+            if '429' in str(e) or 'RATE_LIMIT' in str(e):
+                _due_rate['delay'] = min(_due_rate['max'], _due_rate['delay'] * 2)
+                print(f'  Due-date rate backoff -> {_due_rate["delay"]:.1f}s between calls', file=sys.stderr)
+            raise
+
+
+def enrich_due_date_history(data: dict, project_id: str, slug: str, api_key: str = None,
+                            state: dict = None, api_base: str = None, persist_path=None):
+    """Attach `due_count` + `due_dates` to items whose due date may have changed.
+
+    Incremental: only (re)fetches items with no cached count or whose `updated_at`
+    changed since we last computed (tracked via `due_history_src`). Everything else
+    keeps its carried-over count, so after the first pass each refresh is cheap.
+    Items with due_count >= 2 have been rescheduled; the UI shows a pill at >= 2.
+    """
+    dated = [it for it in data.get('items', []) if it.get('end')]
+    todo = [it for it in dated
+            if it.get('due_count') is None or it.get('due_history_src') != it.get('updated_at')]
+    total = len(todo)
+    if state is not None:
+        state['due_history_total'] = total
+        state['due_history_done'] = 0
+    if not total:
+        return
+    print(f'  Due-date history: {total} of {len(dated)} dated items need (re)compute...', file=sys.stderr)
+    done = 0
+    for it in todo:
+        try:
+            acts = _fetch_activities_paced(project_id, it['id'], slug, api_key=api_key, api_base=api_base)
+            hist = due_date_changes(acts)
+            it['due_count'] = hist['due_count']
+            it['due_dates'] = hist['due_dates']
+            it['due_history_src'] = it.get('updated_at')   # mark as computed for this revision
+        except Exception as e:
+            print(f'  ! due-date history failed for {it.get("seq")}: {e}', file=sys.stderr)
+            continue   # leave uncached so the next refresh retries it
+        done += 1
+        if state is not None:
+            state['due_history_done'] = done
+        # Persist periodically so pills appear progressively, not only at the end.
+        if persist_path is not None and done % 10 == 0:
+            try:
+                persist_path.write_text(json.dumps(data, default=str))
+            except Exception:
+                pass
+
+
+def start_due_history_enrichment(data: dict, project_id: str, slug: str, api_key: str = None, state: dict = None):
+    """Run due-date enrichment in a background thread, then rewrite data.json.
+
+    The server is single-threaded, so we must not block request handling for the
+    minutes this can take. The base refresh has already written data.json; this
+    thread enriches the items and overwrites the file when done, so the pills
+    appear on the next data load. Progress is exposed via the refresh state
+    (`due_history_in_progress` / `_done` / `_total`) for /api/status polling.
+    """
+    if state is not None and state.get('due_history_in_progress'):
+        print('  Due-date history already running; skipping duplicate pass.', file=sys.stderr)
+        return
+    dated_total = sum(1 for it in data.get('items', []) if it.get('end'))
+    if state is not None:
+        state['due_history_in_progress'] = dated_total > 0
+        state['due_history_done'] = 0
+        state['due_history_total'] = dated_total
+        state['due_history_error'] = None
+    if not dated_total:
+        return
+    # Pin the API base now so a later request can't repoint this thread's calls.
+    api_base = _active_api_base
+
+    def _run():
+        try:
+            workspace_dir(slug).mkdir(parents=True, exist_ok=True)
+            path = data_path_for(project_id, slug)
+            enrich_due_date_history(data, project_id, slug, api_key=api_key, state=state,
+                                    api_base=api_base, persist_path=path)
+            path.write_text(json.dumps(data, default=str))
+            print(f'  Due-date history written for {slug}/{project_id}.', file=sys.stderr)
+        except Exception as e:
+            print(f'  ! due-date history thread failed: {e}', file=sys.stderr)
+            if state is not None:
+                state['due_history_error'] = str(e)
+        finally:
+            if state is not None:
+                state['due_history_in_progress'] = False
+
+    threading.Thread(target=_run, name=f'due-history-{project_id[:8]}', daemon=True).start()
 
 
 def aggregate(items, users, states=None, types=None, labels=None):
@@ -609,6 +807,9 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
     items = fetch_work_items(project_id, slug, api_key=api_key, state=state)
     print(f'  Got {len(items)} items in window.', file=sys.stderr)
     data = aggregate(items, users, states, types, labels)
+    # Carry over any previously-computed due-date history so the pills don't blink
+    # off between the fast write below and the background re-enrichment completing.
+    _carry_due_date_history(data, project_id, slug)
     data['_meta'] = {
         'last_refreshed_at': datetime.now(timezone.utc).isoformat(),
         'item_count': len(items),
@@ -627,7 +828,33 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
     }
     with history_path_for(project_id, slug).open('a') as fh:
         fh.write(json.dumps(snapshot, default=str) + '\n')
+    # Due-date history is slow (one activity call per dated item); compute it in a
+    # background thread that rewrites data.json when done, so the refresh request
+    # returns promptly and the single-threaded server stays responsive.
+    start_due_history_enrichment(data, project_id, slug, api_key=api_key, state=state)
     return data
+
+
+def _carry_due_date_history(data: dict, project_id: str, slug: str):
+    """Seed due_count/due_dates on fresh items from the previous data.json, if any.
+
+    Avoids the pills disappearing for ~2 minutes on every refresh while the
+    background pass recomputes them; stale-but-present beats absent.
+    """
+    path = data_path_for(project_id, slug)
+    if not path.exists():
+        return
+    try:
+        prev = json.loads(path.read_text())
+    except Exception:
+        return
+    prev_hist = {i['id']: i for i in prev.get('items', []) if i.get('due_count') is not None}
+    for it in data.get('items', []):
+        old = prev_hist.get(it['id'])
+        if old is not None:
+            it['due_count'] = old.get('due_count')
+            it['due_dates'] = old.get('due_dates')
+            it['due_history_src'] = old.get('due_history_src')
 
 
 # ---- Auth: signed-cookie session keyed on Plane PAT ----
@@ -1079,6 +1306,19 @@ class Handler(BaseHTTPRequestHandler):
                 result = plane_get(api_path, api_key=api_key)
                 rows = result.get('results') if isinstance(result, dict) else result
                 self._send_json({'comments': rows or []})
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
+            return
+        if path == '/api/work-item-activities':
+            qs = urllib.parse.parse_qs(parsed.query)
+            item_id = (qs.get('item_id') or [''])[0]
+            project_id = pid or PLANE_PROJECT_ID
+            if not item_id:
+                self._send_json({'error': 'item_id is required'}, 400)
+                return
+            try:
+                acts = fetch_work_item_activities(project_id, item_id, slug, api_key=api_key)
+                self._send_json(due_date_changes(acts))
             except Exception as e:
                 self._send_json({'error': str(e)}, 500)
             return

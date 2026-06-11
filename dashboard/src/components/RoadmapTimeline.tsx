@@ -27,6 +27,7 @@ import { useDashboard } from '@/lib/dashboard-context';
 import { PRIORITY_INFO } from '@/lib/constants';
 import { api } from '@/lib/api';
 import { EditModal } from './EditWorkItem';
+import { DueChangesPill } from './DueChangesPill';
 
 type Scale = 'week' | 'month' | 'quarter';
 const SCALES: Array<{ key: Scale; label: string; pxPerDay: number }> = [
@@ -1029,6 +1030,7 @@ function RoadmapRow({
               <span className="roadmap-child-badge" title={`${childCount} sub-work item${childCount === 1 ? '' : 's'}`}>{childCount}</span>
             )}
           </button>
+          <DueChangesPill item={item} />
         </span>
         <span className="roadmap-meta-state" title={item.state}>
           <span className="roadmap-state-dot" style={{ background: stateColor }} />

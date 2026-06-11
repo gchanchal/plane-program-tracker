@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { countSeverity, planeItemUrl, prioCls, projectPrefix } from '@/lib/format';
 import { useResizableCols } from '@/lib/use-resizable-cols';
 import { EditWorkItem } from '@/components/EditWorkItem';
+import { DueChangesPill } from '@/components/DueChangesPill';
 import type { ActionBucketKey, ActionItem } from '@/lib/types';
 
 type SortCol = 'priority' | 'seq' | 'name' | 'assignee' | 'metric';
@@ -326,6 +327,7 @@ export function ActionCenterView({ jumpKey }: { jumpKey: ActionBucketKey | null 
                           </span>
                           <span className="action-metric">{it._metricStr}</span>
                           <span className="inline-flex items-center gap-1">
+                            <DueChangesPill item={it} />
                             <EditWorkItem item={it} />
                             <button className="action-fix-btn" onClick={() => isFixOpen ? closeFix() : openFix(key, it.id)}>
                               <Wrench className="h-3.5 w-3.5" />Fix
