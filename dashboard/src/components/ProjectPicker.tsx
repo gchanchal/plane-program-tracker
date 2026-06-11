@@ -18,6 +18,7 @@ export function ProjectPicker() {
     }
   }, [open]);
 
+
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
@@ -26,13 +27,14 @@ export function ProjectPicker() {
     return () => document.removeEventListener('click', onDocClick);
   }, []);
 
-  const filtered = query
+  const matched = query
     ? projects.filter(p =>
         (p.name || '').toLowerCase().includes(query.toLowerCase()) ||
         (p.identifier || '').toLowerCase().includes(query.toLowerCase()))
     : projects;
-
   const selectedSet = new Set(selectedProjectIds);
+  // Selected projects sort to the top; stable within each group (project order).
+  const filtered = [...matched].sort((a, b) => (selectedSet.has(a.id) ? 0 : 1) - (selectedSet.has(b.id) ? 0 : 1));
   const allSelected = projects.length > 0 && selectedProjectIds.length === projects.length;
 
   // Toggle one project; always keep at least one selected. Preserve project order.
