@@ -92,6 +92,22 @@ export interface DueDateChange {
   at?: string;
 }
 
+export interface CacheEntry {
+  workspace_slug: string;
+  project_id: string;
+  project_name?: string | null;
+  item_count?: number;
+  last_refreshed_at?: string | null;
+  refresh_mode?: 'full' | 'delta' | null;
+  window_days?: number;
+  data_bytes: number;
+  raw_bytes: number;
+  history_bytes: number;
+  has_raw: boolean;
+  due_done?: number;
+  due_total?: number;
+}
+
 export interface DueDateChanges {
   /** Number of distinct due dates assigned over time (>= 2 means rescheduled). */
   due_count: number;
