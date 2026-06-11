@@ -1,6 +1,6 @@
 /** /api/* fetch wrappers. Mirrors static/js/api.js. */
 
-import type { DashboardData, DueDateChanges, HistorySnapshot, ProjectsResponse, WorkItemComment } from './types';
+import type { CacheEntry, DashboardData, DueDateChanges, HistorySnapshot, ProjectsResponse, WorkItemComment } from './types';
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init);
@@ -95,5 +95,20 @@ export const api = {
 
   me(): Promise<{ email: string | null; user_id: string | null; display_name: string | null; workspaces: string[]; workspace_slug: string; auth_enabled: boolean }> {
     return jsonFetch('/api/me', { cache: 'no-store' });
+  },
+
+  /** List the cached data files maintained per workspace → project. */
+  async cacheList(): Promise<CacheEntry[]> {
+    const body = await jsonFetch<{ cache?: CacheEntry[] }>('/api/cache', { cache: 'no-store' });
+    return body.cache || [];
+  },
+
+  /** Delete a project's cache (data + raw + history) → next refresh is a full rebuild. */
+  cacheDelete(workspace: string, projectId: string): Promise<{ ok: boolean; removed: string[] }> {
+    return jsonFetch('/api/cache/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace, project_id: projectId }),
+    });
   },
 };

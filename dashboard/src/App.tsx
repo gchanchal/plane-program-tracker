@@ -13,6 +13,7 @@ import { DueWorkView } from '@/components/views/DueWorkView';
 import { CapacityView } from '@/components/views/CapacityView';
 import { FlowView } from '@/components/views/FlowView';
 import { ExplorerView } from '@/components/views/ExplorerView';
+import { SettingsView } from '@/components/views/SettingsView';
 import { RoadmapTimeline } from '@/components/RoadmapTimeline';
 import type { ActionBucketKey } from '@/lib/types';
 import './styles/dashboard.css';
@@ -217,14 +218,17 @@ function Inner() {
     }
   };
 
+  const isSettings = location.pathname.split('/').filter(Boolean)[1] === 'settings';
+
   return (
     <main className="max-w-[1400px] mx-auto px-6">
       <Topbar />
-      <Subhead />
-      <Tabs />
+      {!isSettings && <Subhead />}
+      {!isSettings && <Tabs />}
       <div className="py-4">
         <Routes>
           <Route path="/" element={<HomeRedirect workspaces={workspaces} />} />
+          <Route path="/:ws/settings" element={<SettingsView />} />
           <Route path="/:ws" element={<WsIndex workspaces={workspaces} />} />
           <Route path="/:ws/:tab" element={<TabResolver workspaces={workspaces} viewFor={viewFor} />} />
           <Route path="*" element={<HomeRedirect workspaces={workspaces} />} />

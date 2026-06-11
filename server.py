@@ -133,6 +133,70 @@ def history_path_for(project_id: str, slug: str) -> Path:
     return workspace_dir(slug) / f'{project_id}.history.jsonl'
 
 
+def raw_path_for(project_id: str, slug: str) -> Path:
+    # Raw Plane work items kept alongside the slim cache so a delta refresh can
+    # merge changed items and re-aggregate losslessly. Not sent to the client.
+    return workspace_dir(slug) / f'{project_id}.raw.json'
+
+
+_PROJECT_ID_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+
+
+def cache_entry_for(slug: str, data_path: Path) -> dict:
+    """Summarize one project's cache files for the Settings page (disk-only)."""
+    pid = data_path.name[:-len('.json')]
+    raw_p = raw_path_for(pid, slug)
+    hist_p = history_path_for(pid, slug)
+    entry = {
+        'workspace_slug': slug,
+        'project_id': pid,
+        'data_bytes': data_path.stat().st_size,
+        'raw_bytes': raw_p.stat().st_size if raw_p.exists() else 0,
+        'history_bytes': hist_p.stat().st_size if hist_p.exists() else 0,
+        'has_raw': raw_p.exists(),   # raw cache present ⇒ next refresh is a delta
+    }
+    try:
+        d = json.loads(data_path.read_text())
+        meta = d.get('_meta', {})
+        items = d.get('items', [])
+        entry['item_count'] = meta.get('item_count') if meta.get('item_count') is not None else len(items)
+        entry['last_refreshed_at'] = meta.get('last_refreshed_at')
+        entry['refresh_mode'] = meta.get('refresh_mode')
+        entry['window_days'] = meta.get('window_days')
+        entry['due_done'] = sum(1 for i in items if i.get('due_count') is not None)
+        entry['due_total'] = sum(1 for i in items if i.get('end'))
+    except Exception:
+        pass
+    return entry
+
+
+def list_cache_entries(workspaces) -> list:
+    """All cached project files across the given (authorized) workspaces."""
+    out = []
+    for ws in (workspaces or []):
+        wdir = workspace_dir(ws)
+        if not wdir.exists():
+            continue
+        for f in sorted(wdir.glob('*.json')):
+            if f.name.endswith('.raw.json'):
+                continue
+            out.append(cache_entry_for(ws, f))
+    return out
+
+
+def delete_cache_for(project_id: str, slug: str) -> list:
+    """Remove a project's data, raw, and history files. Returns names removed."""
+    removed = []
+    for p in (data_path_for(project_id, slug), raw_path_for(project_id, slug), history_path_for(project_id, slug)):
+        if p.exists():
+            try:
+                p.unlink()
+                removed.append(p.name)
+            except Exception:
+                pass
+    return removed
+
+
 def migrate_flat_data_files():
     """One-time: move legacy data/<pid>.json (single-workspace layout) into
     data/<PLANE_WORKSPACE_SLUG>/ so the per-workspace layout finds them."""
@@ -352,6 +416,42 @@ def fetch_work_items(project_id: str, slug: str, window_days=WINDOW_DAYS, max_pa
             pages += 1
             cursor = next_cursor
     return [i for i in all_items if (i.get('created_at') or '')[:10] >= cutoff]
+
+
+def fetch_work_items_updated_since(project_id: str, slug: str, since_iso: str, max_pages=30, api_key: str = None, state: dict = None):
+    """Fetch only items changed since `since_iso`, newest-updated first.
+
+    Orders by -updated_at and stops as soon as a page's newest items are all older
+    than the cutoff, so a delta refresh pulls just the handful of changed/new items
+    instead of the whole window.
+    """
+    all_items, cursor, pages = [], None, 0
+    path = f'workspaces/{slug}/projects/{project_id}/work-items/'
+    while pages < max_pages:
+        params = {'per_page': 100, 'order_by': '-updated_at'}
+        if cursor:
+            params['cursor'] = cursor
+        result = plane_get(path, params, api_key=api_key)
+        if isinstance(result, dict):
+            items = result.get('results') or result.get('items') or []
+            next_cursor = result.get('next_cursor')
+        else:
+            items, next_cursor = result, None
+        # Keep only the changed ones; stop once we pass the cutoff.
+        fresh = [i for i in items if (i.get('updated_at') or '') > since_iso]
+        all_items.extend(fresh)
+        if state is not None:
+            state['pages_fetched'] = pages + 1
+        if len(fresh) < len(items):
+            break  # reached items at/older than the cutoff on this page → done
+        pages += 1
+        if not next_cursor:
+            if not items:
+                break
+            cursor = f'100:{pages}:0'
+        else:
+            cursor = next_cursor
+    return all_items
 
 
 def fetch_states(project_id: str, slug: str, api_key: str = None):
@@ -793,8 +893,29 @@ def aggregate(items, users, states=None, types=None, labels=None):
     }
 
 
+def _load_raw_cache(project_id: str, slug: str):
+    path = raw_path_for(project_id, slug)
+    if not path.exists():
+        return None
+    try:
+        cached = json.loads(path.read_text())
+    except Exception:
+        return None
+    if not cached.get('items') or not cached.get('last_refreshed_at'):
+        return None
+    return cached
+
+
 def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = None):
-    """Re-fetch + write data/<slug>/<project_id>.json. Returns updated data."""
+    """Re-fetch + write data/<slug>/<project_id>.json. Returns updated data.
+
+    Incremental by default: if a raw cache exists, fetch only items updated since
+    the last refresh and merge them in. A full window pull happens only when the
+    raw cache is missing (first run, or the user deleted it from Settings).
+    """
+    # Timestamp captured BEFORE fetching, so the next delta re-checks anything that
+    # changed during this run (a small, harmless overlap beats missing an edit).
+    started_at = datetime.now(timezone.utc).isoformat()
     print(f'  Fetching workspace members for {slug}...', file=sys.stderr)
     users = fetch_members(slug, api_key=api_key)
     print(f'  Got {len(users)} members.', file=sys.stderr)
@@ -803,21 +924,42 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
     types = fetch_types(project_id, slug, api_key=api_key)
     labels = fetch_labels(project_id, slug, api_key=api_key)
     print(f'  Got {len(states)} states, {len(types)} work item types, {len(labels)} labels.', file=sys.stderr)
-    print(f'  Fetching work items for {project_id} (last {WINDOW_DAYS} days)...', file=sys.stderr)
-    items = fetch_work_items(project_id, slug, api_key=api_key, state=state)
-    print(f'  Got {len(items)} items in window.', file=sys.stderr)
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)).date().isoformat()
+    prev_raw = _load_raw_cache(project_id, slug)
+    if prev_raw:
+        since = prev_raw['last_refreshed_at']
+        print(f'  Delta refresh: fetching items updated since {since}...', file=sys.stderr)
+        delta = fetch_work_items_updated_since(project_id, slug, since, api_key=api_key, state=state)
+        by_id = {i['id']: i for i in prev_raw['items']}
+        for it in delta:
+            by_id[it['id']] = it
+        items = [i for i in by_id.values() if (i.get('created_at') or '')[:10] >= cutoff]
+        mode = 'delta'
+        print(f'  Delta: {len(delta)} changed; {len(items)} items in window.', file=sys.stderr)
+    else:
+        print(f'  Full refresh: fetching work items (last {WINDOW_DAYS} days)...', file=sys.stderr)
+        items = fetch_work_items(project_id, slug, api_key=api_key, state=state)
+        mode = 'full'
+        print(f'  Full: {len(items)} items in window.', file=sys.stderr)
+
+    workspace_dir(slug).mkdir(parents=True, exist_ok=True)
+    raw_path_for(project_id, slug).write_text(json.dumps(
+        {'items': items, 'last_refreshed_at': started_at,
+         'project_id': project_id, 'workspace_slug': slug}, default=str))
+
     data = aggregate(items, users, states, types, labels)
     # Carry over any previously-computed due-date history so the pills don't blink
     # off between the fast write below and the background re-enrichment completing.
     _carry_due_date_history(data, project_id, slug)
     data['_meta'] = {
-        'last_refreshed_at': datetime.now(timezone.utc).isoformat(),
+        'last_refreshed_at': started_at,
         'item_count': len(items),
         'window_days': WINDOW_DAYS,
         'project_id': project_id,
         'workspace_slug': slug,
+        'refresh_mode': mode,
     }
-    workspace_dir(slug).mkdir(parents=True, exist_ok=True)
     data_path_for(project_id, slug).write_text(json.dumps(data, default=str))
     snapshot = {
         'ts': data['_meta']['last_refreshed_at'],
@@ -1294,6 +1436,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/status':
             self._send_json(refresh_state_for(slug, pid))
             return
+        if path == '/api/cache':
+            entries = list_cache_entries(remembered)
+            # Best-effort project names per workspace (one cheap projects call each).
+            names_by_ws = {}
+            for ws in {e['workspace_slug'] for e in entries}:
+                try:
+                    names_by_ws[ws] = {p['id']: p['name'] for p in fetch_projects(ws, api_key=api_key)}
+                except Exception:
+                    names_by_ws[ws] = {}
+            for e in entries:
+                e['project_name'] = names_by_ws.get(e['workspace_slug'], {}).get(e['project_id'])
+            self._send_json({'cache': entries})
+            return
         if path == '/api/work-item-comments':
             qs = urllib.parse.parse_qs(parsed.query)
             item_id = (qs.get('item_id') or [''])[0]
@@ -1427,6 +1582,28 @@ class Handler(BaseHTTPRequestHandler):
             # _send_json via the renew slot, overriding the sliding-session renewal).
             self._renew_cookie = _cookie_header(SESSION_COOKIE, fresh, max_age=SESSION_TTL_SECONDS)
             self._send_json({'ok': True, 'workspace_slug': new_slug, 'workspaces': updated})
+            return
+
+        # Delete a project's cached files (data + raw + history). With the raw
+        # cache gone the next refresh is a full rebuild instead of a delta.
+        if raw_path == '/api/cache/delete':
+            length = int(self.headers.get('Content-Length', 0) or 0)
+            try:
+                body = json.loads(self.rfile.read(length).decode()) if length else {}
+            except Exception:
+                self._send_json({'error': 'invalid JSON body'}, 400)
+                return
+            ws = safe_slug(body.get('workspace') or '')
+            project_id = (body.get('project_id') or '').strip()
+            if not ws or ws not in (remembered or []):
+                self._send_json({'error': 'unknown or unauthorized workspace'}, 403)
+                return
+            if not _PROJECT_ID_RE.match(project_id):
+                self._send_json({'error': 'invalid project_id'}, 400)
+                return
+            removed = delete_cache_for(project_id, ws)
+            _refresh_states.pop((ws, project_id), None)
+            self._send_json({'ok': True, 'removed': removed})
             return
 
         path, pid = self._query_project_id()
