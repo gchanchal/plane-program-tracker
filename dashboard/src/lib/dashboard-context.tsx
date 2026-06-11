@@ -35,6 +35,8 @@ interface DashboardContextValue {
   setSelectedProjectIds: (ids: string[]) => void;
   /** True when more than one project is selected (combined view). */
   isMulti: boolean;
+  /** Selection as a URL-friendly identifier list, e.g. "WEB,PHOENIX". */
+  selectedProjectParam: string;
   /** Filtered + recomputed view of the cached data, scoped to `windowDays`. */
   data: DashboardData | null;
   /** Original server-cached snapshot (full window). Useful for window picker bounds. */
@@ -112,7 +114,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         const list = body.projects || [];
         setProjects(list);
         const valid = new Set(list.map(p => p.id));
-        // Restore a saved selection (JSON array, or a legacy single-id string).
+        // Selection priority: URL (?projects=) so shared links open the right
+        // project(s) → then the last saved selection → then the default.
+        // URL tokens are project identifiers (WEB), but also accept raw UUIDs.
+        const identToId = new Map(list.map(p => [(p.identifier || '').toLowerCase(), p.id]));
+        const fromUrl = new URLSearchParams(location.search).get('projects');
+        const urlIds = (fromUrl ? fromUrl.split(',') : [])
+          .map(t => t.trim())
+          .filter(Boolean)
+          .map(t => (valid.has(t) ? t : identToId.get(t.toLowerCase())))
+          .filter((x): x is string => !!x);
         const saved = (() => {
           try {
             const raw = localStorage.getItem(STORAGE_KEYS.project);
@@ -124,7 +135,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             return raw ? [raw] : [];
           }
         })();
-        let pick = saved.filter(id => valid.has(id));
+        let pick = urlIds.filter(id => valid.has(id));
+        if (!pick.length) pick = saved.filter(id => valid.has(id));
         if (!pick.length) {
           if (body.default_project_id && valid.has(body.default_project_id)) pick = [body.default_project_id];
           else if (list.length) pick = [list[0].id];
@@ -137,6 +149,27 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     })();
     return () => { cancelled = true; };
   }, [workspaceSlug, activeValid]);
+
+  // Selection as project identifiers (WEB, PHOENIX) for a readable, shareable URL.
+  const selectedProjectParam = useMemo(
+    () => selectedProjectIds.map(id => projects.find(p => p.id === id)?.identifier || id).join(','),
+    [selectedProjectIds, projects],
+  );
+
+  // Keep the URL's ?projects= in sync with the current selection so the link is
+  // shareable (and reflects which project's data is on screen). Replace, not push,
+  // so it doesn't add history entries; tab links already carry the same query.
+  useEffect(() => {
+    if (!selectedProjectParam) return;
+    const sp = new URLSearchParams(location.search);
+    if (sp.get('projects') === selectedProjectParam) return;
+    // Build the search by hand so the comma stays literal (?projects=WEB,PHOENIX)
+    // rather than URLSearchParams' %2C, while preserving any other params.
+    sp.delete('projects');
+    const rest = sp.toString();
+    const search = `?projects=${selectedProjectParam}` + (rest ? `&${rest}` : '');
+    navigate({ pathname: location.pathname, search }, { replace: true });
+  }, [selectedProjectParam, location.pathname, location.search, navigate]);
 
   // Load cached data + history when currentProjectId changes.
   //
@@ -307,7 +340,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const value: DashboardContextValue = {
     status, errorMsg, workspaces, workspaceSlug, addWorkspace,
     projects, currentProjectId, setCurrentProjectId,
-    selectedProjectIds, setSelectedProjectIds, isMulti,
+    selectedProjectIds, setSelectedProjectIds, isMulti, selectedProjectParam,
     currentProject, data, rawData, history, actions, refresh, refreshing,
     windowDays: effectiveWindow, setWindowDays, maxWindowDays,
   };
