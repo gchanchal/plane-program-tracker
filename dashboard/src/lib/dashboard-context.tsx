@@ -172,12 +172,39 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const h = await api.history(workspaceSlug, currentProjectId);
       setRawData(d);
       setHistory(h);
+      // Due-date history is computed in a background thread on the server and
+      // rewrites the data file when done. Poll until it finishes, then re-fetch
+      // so the reschedule pills appear without a manual reload.
+      void pollDueHistory(workspaceSlug, currentProjectId);
     } catch (e) {
       setErrorMsg((e as Error).message);
     } finally {
       setRefreshing(false);
     }
   }, [currentProjectId, workspaceSlug]);
+
+  const pollDueHistory = useCallback(async (slug: string, projectId: string) => {
+    // The first due-history pass can take several minutes when Plane is throttling.
+    // Poll for up to ~20 min; the server persists progress every few items, so we
+    // re-fetch data periodically to let the reschedule pills trickle in, plus a
+    // final fetch once the pass reports done.
+    const stillViewing = () => slug === workspaceSlug && projectId === currentProjectId;
+    for (let i = 0; i < 240; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      let st: Awaited<ReturnType<typeof api.status>>;
+      try {
+        st = await api.status(slug, projectId);
+      } catch {
+        return;
+      }
+      const done = !st.due_history_in_progress;
+      // Refresh visible data every ~20s while running so partial counts show up.
+      if (stillViewing() && (done || i % 4 === 3)) {
+        try { setRawData(await api.data(slug, projectId)); } catch { /* keep current */ }
+      }
+      if (done) return;
+    }
+  }, [workspaceSlug, currentProjectId]);
 
   const addWorkspace = useCallback(async (urlOrSlug: string) => {
     const res = await api.addWorkspace(urlOrSlug);

@@ -9,6 +9,7 @@ import { PieChart } from '@/components/charts/pie-chart';
 import { PieSlice } from '@/components/charts/pie-slice';
 import { PieCenter } from '@/components/charts/pie-center';
 import { EditWorkItem } from '@/components/EditWorkItem';
+import { DueChangesPill } from '@/components/DueChangesPill';
 import type { ActionBucketKey, Priority, StateGroup, WorkItem } from '@/lib/types';
 
 const G_ORDER: StateGroup[] = ['completed', 'started', 'unstarted', 'backlog', 'cancelled'];
@@ -290,7 +291,7 @@ function UserBucketList({
             const prio = PRIORITY_INFO[item.priority] || PRIORITY_INFO.none;
             const url = planeItemUrl(item.seq, { id: '', identifier: projIdent }, meta);
             return (
-              <div key={item.id} className="action-row" style={{ display: 'grid', gridTemplateColumns: '90px 1fr auto auto auto auto', gap: 12, alignItems: 'center', padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 12.5 }}>
+              <div key={item.id} className="action-row" style={{ display: 'grid', gridTemplateColumns: '90px 1fr auto auto auto auto auto', gap: 12, alignItems: 'center', padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 12.5 }}>
                 <a href={url} target="_blank" rel="noopener" className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1" onClick={e => e.stopPropagation()}>
                   {projIdent}-{item.seq}
                   <ExternalLink className="h-3 w-3" />
@@ -299,6 +300,7 @@ function UserBucketList({
                 <span className={'badge ' + prioCls(item.priority)}>{prio.label}</span>
                 <span className="text-muted-foreground text-[11px]">{item.state}</span>
                 <span className="text-muted-foreground text-[11px]">{item._metricStr}</span>
+                <span className="inline-flex justify-end"><DueChangesPill item={item} /></span>
                 <EditWorkItem item={item} />
               </div>
             );
