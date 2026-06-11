@@ -5,7 +5,10 @@ import type { DashboardData, Priority, ProjectSummary, StateGroup } from './type
 
 export function fmtShortDate(iso?: string | null): string {
   if (!iso) return '';
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  // Date-only values (YYYY-MM-DD) are calendar dates, not instants — format in UTC
+  // so they render as the literal day regardless of the viewer's timezone.
+  const d = iso.length <= 10 ? new Date(iso + 'T00:00:00Z') : new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 export function daysBetween(aIso?: string, bIso?: string): number | null {
