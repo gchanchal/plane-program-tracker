@@ -10,4 +10,4 @@ resources:
 images:
 - name: plane-tracker
   newName: docker.io/makeplane/plane-tracker
-  newTag: 633a67ecd6998c0fc815828f53eabc4f4eaef9d0
+  newTag: 833d156190d99e75608d3344c5da874735fa7ae2
