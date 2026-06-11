@@ -676,12 +676,11 @@ def due_date_changes(activities: list) -> dict:
     """From a work item's activity log, summarize its due-date (target_date) history.
 
     Returns {due_count, due_dates, changes} where:
-      - due_dates is the chronological list of every distinct due date the item
-        was assigned (the initial set IS included; consecutive duplicates and
-        clears are dropped).
-      - due_count = len(due_dates). A value >= 2 means the due date was moved at
-        least once.
-      - changes is the from->to chain (with timestamps) for a detailed tooltip.
+      - due_dates is the DISTINCT due dates the item has been assigned, in first-seen
+        order (initial set included; clears ignored; a date repeated later does NOT
+        count again). So Jun 12 -> Jun 19 -> Jun 12 yields [Jun 12, Jun 19].
+      - due_count = len(due_dates). >= 2 means it has had more than one deadline.
+      - changes is the full from->to chain (with timestamps) for the tooltip.
     """
     def norm(v):
         # Plane records an unset date as the string "None" (or null/empty).
@@ -695,6 +694,7 @@ def due_date_changes(activities: list) -> dict:
         key=lambda a: a.get('created_at') or '',
     )
     due_dates = []
+    seen = set()
     changes = []
     for a in entries:
         old = norm(a.get('old_value'))
@@ -702,8 +702,9 @@ def due_date_changes(activities: list) -> dict:
         if old == new:
             continue
         changes.append({'from': old, 'to': new, 'at': a.get('created_at')})
-        # Track each real due date assigned, ignoring clears (new is None).
-        if new is not None and (not due_dates or due_dates[-1] != new):
+        # Track each DISTINCT real due date assigned, ignoring clears (new is None).
+        if new is not None and new not in seen:
+            seen.add(new)
             due_dates.append(new)
     return {'due_count': len(due_dates), 'due_dates': due_dates, 'changes': changes}
 
@@ -712,6 +713,10 @@ def due_date_changes(activities: list) -> dict:
 # such call is ever in flight, no matter how many projects refresh at once. The
 # delay between calls adapts to Plane's (bursty, sub-60/min) limiter — it grows on
 # 429 and eases back on success — so we never storm the user's real workspace.
+# Bump when the due_date_changes counting RULE changes, so cached counts are
+# recomputed even for items whose updated_at hasn't moved. v2 = distinct due dates.
+DUE_LOGIC_VERSION = 2
+
 _due_rate = {
     'gate': threading.Lock(),
     'delay': 1.5,    # current seconds between activity calls
@@ -746,7 +751,9 @@ def enrich_due_date_history(data: dict, project_id: str, slug: str, api_key: str
     """
     dated = [it for it in data.get('items', []) if it.get('end')]
     todo = [it for it in dated
-            if it.get('due_count') is None or it.get('due_history_src') != it.get('updated_at')]
+            if it.get('due_count') is None
+            or it.get('due_history_src') != it.get('updated_at')
+            or it.get('due_logic_version') != DUE_LOGIC_VERSION]
     total = len(todo)
     if state is not None:
         state['due_history_total'] = total
@@ -762,6 +769,7 @@ def enrich_due_date_history(data: dict, project_id: str, slug: str, api_key: str
             it['due_count'] = hist['due_count']
             it['due_dates'] = hist['due_dates']
             it['due_history_src'] = it.get('updated_at')   # mark as computed for this revision
+            it['due_logic_version'] = DUE_LOGIC_VERSION
         except Exception as e:
             print(f'  ! due-date history failed for {it.get("seq")}: {e}', file=sys.stderr)
             continue   # leave uncached so the next refresh retries it
@@ -1092,6 +1100,7 @@ def _carry_due_date_history(data: dict, project_id: str, slug: str):
             it['due_count'] = old.get('due_count')
             it['due_dates'] = old.get('due_dates')
             it['due_history_src'] = old.get('due_history_src')
+            it['due_logic_version'] = old.get('due_logic_version')
 
 
 # ---- Auth: signed-cookie session keyed on Plane PAT ----
