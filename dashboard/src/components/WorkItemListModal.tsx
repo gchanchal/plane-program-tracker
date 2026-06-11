@@ -68,7 +68,7 @@ export function WorkItemListModal({ open, onClose, title, subtitle, items, curre
           ) : (
             items.map(item => {
               const prio = PRIORITY_INFO[item.priority] || PRIORITY_INFO.none;
-              const url = planeItemUrl(item.seq, { id: '', identifier: projIdent } as ProjectSummary, meta);
+              const url = planeItemUrl(item.seq, { id: '', identifier: item.project_identifier || projIdent } as ProjectSummary, meta);
               return (
                 <div
                   key={item.id}
@@ -82,7 +82,7 @@ export function WorkItemListModal({ open, onClose, title, subtitle, items, curre
                     className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
                     onClick={e => e.stopPropagation()}
                   >
-                    {projIdent}-{item.seq}
+                    {item.project_identifier || projIdent}-{item.seq}
                     <ExternalLink className="h-3 w-3" />
                   </a>
                   <span className="truncate" title={item.name}>{item.name}</span>

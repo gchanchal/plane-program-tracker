@@ -184,6 +184,89 @@ def list_cache_entries(workspaces) -> list:
     return out
 
 
+def merge_dashboards(datas: list) -> dict:
+    """Combine several projects' cached dashboards into one.
+
+    Items are concatenated (each tagged with its project_id/identifier/name);
+    KPIs and the various counts are additive; users/states/labels are unioned.
+    No Plane calls — this only stitches together already-cached data.
+    """
+    items = []
+    kpi = defaultdict(int)
+    group_counts, priority_counts, type_counts = Counter(), Counter(), Counter()
+    weeks = defaultdict(int)
+    users, user_colors = {}, {}
+    states, labels = {}, {}
+    portfolios = []
+    today, cutoff, state_group_info = '', '', None
+    project_ids = []
+    last_refreshed = ''
+    for d in datas:
+        meta = d.get('_meta', {})
+        pid = meta.get('project_id')
+        ident = meta.get('project_identifier')
+        pname = meta.get('project_name')
+        if pid:
+            project_ids.append(pid)
+        for it in d.get('items', []):
+            it = dict(it)
+            it.setdefault('project_id', pid)
+            it.setdefault('project_identifier', ident)
+            it.setdefault('project_name', pname)
+            items.append(it)
+        for k, v in (d.get('kpi') or {}).items():
+            if isinstance(v, (int, float)):
+                kpi[k] += v
+        group_counts.update(d.get('group_counts') or {})
+        priority_counts.update(d.get('priority_counts') or {})
+        type_counts.update(d.get('type_counts') or {})
+        for w in (d.get('weeks') or []):
+            weeks[w.get('week')] += w.get('count', 0)
+        users.update(d.get('users') or {})
+        user_colors.update(d.get('user_colors') or {})
+        for s in (d.get('states_list') or []):
+            states[s.get('id')] = s
+        for l in (d.get('labels_list') or []):
+            labels[l.get('id')] = l
+        for pf in (d.get('portfolios') or []):
+            pf = dict(pf)
+            pf.setdefault('project_id', pid)
+            pf.setdefault('project_identifier', ident)
+            pf.setdefault('project_name', pname)
+            portfolios.append(pf)
+        today = max(today, d.get('today') or '')
+        c = d.get('cutoff') or ''
+        cutoff = c if not cutoff else min(cutoff, c)
+        state_group_info = state_group_info or d.get('state_group_info')
+        last_refreshed = max(last_refreshed, meta.get('last_refreshed_at') or '')
+    workable = kpi.get('workable', 0)
+    kpi['pct_done'] = round(100 * kpi.get('done', 0) / workable) if workable else 0
+    weeks_list = [{'week': w, 'count': weeks[w]} for w in sorted(k for k in weeks if k)]
+    portfolios.sort(key=lambda p: -((p.get('breakdown') or {}).get('_total', 0)))
+    return {
+        'items': items,
+        'kpi': dict(kpi),
+        'group_counts': dict(group_counts),
+        'priority_counts': dict(priority_counts),
+        'type_counts': dict(type_counts),
+        'portfolios': portfolios[:8],
+        'weeks': weeks_list,
+        'today': today,
+        'cutoff': cutoff,
+        'state_group_info': state_group_info,
+        'users': users,
+        'user_colors': user_colors,
+        'states_list': list(states.values()),
+        'labels_list': list(labels.values()),
+        '_meta': {
+            'multi': True,
+            'project_ids': project_ids,
+            'item_count': len(items),
+            'last_refreshed_at': last_refreshed or None,
+        },
+    }
+
+
 def delete_cache_for(project_id: str, slug: str) -> list:
     """Remove a project's data, raw, and history files. Returns names removed."""
     removed = []
@@ -924,6 +1007,16 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
     types = fetch_types(project_id, slug, api_key=api_key)
     labels = fetch_labels(project_id, slug, api_key=api_key)
     print(f'  Got {len(states)} states, {len(types)} work item types, {len(labels)} labels.', file=sys.stderr)
+    # Resolve this project's identifier + name once, stored in _meta so the
+    # multi-project merge can tag items without any per-load API call.
+    proj_identifier, proj_name = None, None
+    try:
+        for p in fetch_projects(slug, api_key=api_key):
+            if p['id'] == project_id:
+                proj_identifier, proj_name = p.get('identifier'), p.get('name')
+                break
+    except Exception:
+        pass
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)).date().isoformat()
     prev_raw = _load_raw_cache(project_id, slug)
@@ -957,6 +1050,8 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
         'item_count': len(items),
         'window_days': WINDOW_DAYS,
         'project_id': project_id,
+        'project_identifier': proj_identifier,
+        'project_name': proj_name,
         'workspace_slug': slug,
         'refresh_mode': mode,
     }
@@ -1396,6 +1491,49 @@ class Handler(BaseHTTPRequestHandler):
             if not slug:
                 self._send_json({'error': 'no workspace selected', 'needs_workspace': True}, 400)
                 return
+            pids = [x for x in pid.split(',') if x]
+            if len(pids) > 1:
+                # Combined view: stitch together each project's cached dashboard.
+                datas, missing = [], []
+                for one in pids:
+                    dp = data_path_for(one, slug)
+                    try:
+                        raw = dp.read_bytes() if dp.exists() else b''
+                    except OSError:
+                        raw = b''
+                    if raw and b'"labels_list"' in raw:
+                        try:
+                            d = json.loads(raw)
+                        except Exception:
+                            d = None
+                        if d:
+                            meta = d.get('_meta') or {}
+                            meta.setdefault('project_id', one)
+                            d['_meta'] = meta
+                            datas.append(d)
+                            continue
+                    missing.append(one)
+                if not datas:
+                    self._send_json({'error': 'no cached data for selected projects; click Refresh',
+                                     'project_ids': pids, 'missing': missing}, 404)
+                    return
+                # Fill any project identifiers missing from older caches (one call).
+                if any(not (d.get('_meta') or {}).get('project_identifier') for d in datas):
+                    try:
+                        pm = {p['id']: p for p in fetch_projects(slug, api_key=api_key)}
+                        for d in datas:
+                            m = d['_meta']
+                            info = pm.get(m.get('project_id')) or {}
+                            m.setdefault('project_identifier', info.get('identifier'))
+                            m.setdefault('project_name', info.get('name'))
+                    except Exception:
+                        pass
+                merged = merge_dashboards(datas)
+                merged['_meta']['workspace_slug'] = slug
+                merged['_meta']['missing'] = missing
+                self._send_json(merged)
+                return
+            pid = pids[0] if pids else pid
             p = data_path_for(pid, slug)
             if p.exists():
                 # Auto-invalidate caches written before the labels feature.

@@ -37,6 +37,11 @@ export interface WorkItem {
   due_count?: number;
   /** Chronological list of every due date assigned, for the reschedule pill's tooltip. */
   due_dates?: string[];
+  /** Owning project — set in combined (multi-project) views so each row can show its
+   *  own prefix/URL and route edits to the right project. Absent in single-project mode. */
+  project_id?: string;
+  project_identifier?: string;
+  project_name?: string;
 }
 
 export interface StateGroupInfo {
@@ -66,6 +71,10 @@ export interface Portfolio {
   target_date?: string;
   assignee?: string;
   breakdown: PortfolioBreakdown;
+  /** Owning project (combined views). */
+  project_id?: string;
+  project_identifier?: string;
+  project_name?: string;
 }
 
 export interface StateRecord {

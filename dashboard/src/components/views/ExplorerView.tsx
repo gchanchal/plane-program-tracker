@@ -25,8 +25,8 @@ function PortfolioCard({ p, projectIdent, meta }: { p: Portfolio; projectIdent: 
         <span className={'badge ' + prioCls(p.priority)}>{p.priority}</span>
       </div>
       <div className="pc-meta">
-        <a href={planeItemUrl(p.seq, { id: '', identifier: projectIdent }, meta)} target="_blank" rel="noopener" style={{ color: 'inherit', textDecoration: 'none' }}>
-          {projectIdent}-{p.seq}
+        <a href={planeItemUrl(p.seq, { id: '', identifier: p.project_identifier || projectIdent }, meta)} target="_blank" rel="noopener" style={{ color: 'inherit', textDecoration: 'none' }}>
+          {p.project_identifier || projectIdent}-{p.seq}
         </a> · {dateStr} · {total} descendants
       </div>
       <div className="pc-progress-bar">
@@ -178,8 +178,8 @@ function ItemRow({
             <button className="chevron" onClick={() => toggle(item.id)}>{isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}</button>
           ) : <span className="chevron-spacer" />}
           <span className="type-icon" style={{ background: typeColor }} title={item.type} />
-          <a className="row-seq" href={planeItemUrl(item.seq, { id: '', identifier: projectIdent }, meta)} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}>
-            {projectIdent}-{item.seq}
+          <a className="row-seq" href={planeItemUrl(item.seq, { id: '', identifier: item.project_identifier || projectIdent }, meta)} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}>
+            {item.project_identifier || projectIdent}-{item.seq}
           </a>
           <span className="row-name">{item.name}</span>
           {hasChildren && <span className="group-count">{children.length}</span>}

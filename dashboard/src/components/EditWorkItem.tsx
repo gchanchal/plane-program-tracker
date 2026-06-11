@@ -79,6 +79,8 @@ export function EditWorkItem({ item, variant = 'icon', className }: Props) {
 
 export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => void }) {
   const { currentProjectId, workspaceSlug, refresh, data } = useDashboard();
+  // In combined views the item carries its own project; fall back to the active one.
+  const projectId = item.project_id || currentProjectId;
   const [priority, setPriority] = useState<Priority>(item.priority);
   const [start, setStart] = useState(item.start || '');
   const [end, setEnd] = useState(item.end || '');
@@ -113,11 +115,11 @@ export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => vo
   const userColors = data?.user_colors || {};
 
   const fetchComments = useCallback(async () => {
-    if (!currentProjectId) return;
+    if (!projectId) return;
     setCommentsLoading(true);
     setCommentsErr(null);
     try {
-      const list = await api.listComments(workspaceSlug!, currentProjectId, item.id);
+      const list = await api.listComments(workspaceSlug!, projectId, item.id);
       list.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
       setComments(list);
     } catch (e) {
@@ -125,7 +127,7 @@ export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => vo
     } finally {
       setCommentsLoading(false);
     }
-  }, [currentProjectId, item.id]);
+  }, [projectId, item.id]);
 
   useEffect(() => { fetchComments(); }, [fetchComments]);
 
@@ -157,7 +159,7 @@ export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => vo
     descriptionDirty;
 
   const handleSave = async () => {
-    if (!currentProjectId || !dirty) return;
+    if (!projectId || !dirty) return;
     const patch: Record<string, unknown> = {};
     if (priority !== item.priority) patch.priority = priority;
     if (start !== (item.start || '')) patch.start_date = start || null;
@@ -170,7 +172,7 @@ export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => vo
     setSaving(true);
     setMsg(null);
     try {
-      await api.patchWorkItem(workspaceSlug!, currentProjectId, item.id, patch);
+      await api.patchWorkItem(workspaceSlug!, projectId, item.id, patch);
       setMsg({ kind: 'ok', text: 'Saved. Refreshing…' });
       await refresh();
       onClose();
@@ -182,13 +184,13 @@ export function EditModal({ item, onClose }: { item: WorkItem; onClose: () => vo
   };
 
   const handleComment = async () => {
-    if (!currentProjectId || !comment.trim()) return;
+    if (!projectId || !comment.trim()) return;
     const html = commentToHtml(comment);
     if (!html) return;
     setPosting(true);
     setMsg(null);
     try {
-      await api.addComment(workspaceSlug!, currentProjectId, item.id, html);
+      await api.addComment(workspaceSlug!, projectId, item.id, html);
       setMsg({ kind: 'ok', text: 'Comment posted.' });
       setComment('');
       fetchComments();

@@ -74,16 +74,17 @@ function WindowPicker() {
 }
 
 function Subhead() {
-  const { data, currentProject, status, errorMsg } = useDashboard();
+  const { data, currentProject, status, errorMsg, isMulti, selectedProjectIds } = useDashboard();
   if (status === 'error') {
     return <p className="text-sm text-red-600 dark:text-red-400">Error: {errorMsg}</p>;
   }
   if (status === 'loading' || !data) {
     return <p className="text-sm text-muted-foreground">Loading from local server…</p>;
   }
+  const title = isMulti ? `${selectedProjectIds.length} projects combined` : (currentProject?.name || 'Workspace data');
   return (
     <h2 className="text-xl font-semibold tracking-tight mt-1 mb-2">
-      {currentProject?.name || 'Workspace data'}
+      {title}
       <span className="ml-3 text-sm font-normal text-muted-foreground">
         <WindowPicker />
         <span className="mx-1.5">·</span>

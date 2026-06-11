@@ -44,6 +44,22 @@ export function planeItemUrl(seq: number, project: ProjectSummary | null, meta?:
   return `https://app.plane.so/${ws}/browse/${projectPrefix(project)}-${seq}/`;
 }
 
+/** Project prefix for a work item, preferring its own project (combined views)
+ *  and falling back to the single active project. */
+export function itemPrefix(item: { project_identifier?: string }, project?: ProjectSummary | null): string {
+  return item.project_identifier || projectPrefix(project);
+}
+
+/** Plane deep-link for a work item, using the item's own project when present. */
+export function itemUrl(
+  item: { seq: number; project_identifier?: string },
+  project: ProjectSummary | null,
+  meta?: { workspace_slug?: string },
+): string {
+  const ws = meta?.workspace_slug || 'plane';
+  return `https://app.plane.so/${ws}/browse/${itemPrefix(item, project)}-${item.seq}/`;
+}
+
 export function countSeverity(n: number, warnAt: number, badAt: number): 'low' | 'warn' | 'bad' {
   if (n === 0) return 'low';
   if (n >= badAt) return 'bad';
