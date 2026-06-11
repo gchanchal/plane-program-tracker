@@ -230,9 +230,10 @@ export function RoadmapTimeline() {
   }, [showResolved, showUnresolved]);
 
   const searchActive = search.trim().length > 0;
-  const formatId = useCallback((seq: number | undefined): string => {
-    if (seq === undefined || seq === null) return '';
-    return projectIdent ? `${projectIdent}-${seq}` : String(seq);
+  const formatId = useCallback((it: { seq?: number; project_identifier?: string }): string => {
+    if (it.seq === undefined || it.seq === null) return '';
+    const ident = it.project_identifier || projectIdent;
+    return ident ? `${ident}-${it.seq}` : String(it.seq);
   }, [projectIdent]);
   const matchesSearch = useCallback((it: WorkItem) => {
     if (!searchActive) return true;
@@ -244,7 +245,7 @@ export function RoadmapTimeline() {
       it.priority.toLowerCase().includes(q) ||
       prioLabel.toLowerCase().includes(q) ||
       String(it.seq).includes(q) ||
-      formatId(it.seq).toLowerCase().includes(q)
+      formatId(it).toLowerCase().includes(q)
     );
   }, [search, searchActive, formatId]);
 
@@ -361,17 +362,21 @@ export function RoadmapTimeline() {
   const discardAll = () => { setPendingEdits(new Map()); setMsg(null); };
 
   const pushAll = async () => {
-    if (!currentProjectId || pendingEdits.size === 0) return;
+    if (pendingEdits.size === 0) return;
     setSaving(true);
     setMsg(null);
     const failures: string[] = [];
+    // Each item routes to its own project (combined views), else the active one.
+    const projectOf = new Map((data?.items || []).map(i => [i.id, i.project_id || currentProjectId]));
     for (const [itemId, edit] of pendingEdits) {
       const patch: Record<string, unknown> = {};
       if ('start' in edit) patch.start_date = edit.start ?? null;
       if ('end'   in edit) patch.target_date = edit.end ?? null;
       if (Object.keys(patch).length === 0) continue;
+      const projectId = projectOf.get(itemId) || currentProjectId;
+      if (!projectId) { failures.push(`${itemId.slice(0, 6)}: no project`); continue; }
       try {
-        await api.patchWorkItem(workspaceSlug!, currentProjectId, itemId, patch);
+        await api.patchWorkItem(workspaceSlug!, projectId, itemId, patch);
       } catch (e) {
         failures.push(`${itemId.slice(0, 6)}: ${(e as Error).message}`);
       }
@@ -595,7 +600,7 @@ export function RoadmapTimeline() {
                     userColors={data.user_colors || {}}
                     users={data.users || {}}
                     today={data.today}
-                    displayId={formatId(item.seq)}
+                    displayId={formatId(item)}
                     hasChildren={hasChildren}
                     childCount={childCount ?? 0}
                     expanded={expandedParents.has(item.id)}

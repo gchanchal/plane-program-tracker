@@ -26,9 +26,15 @@ interface DashboardContextValue {
   /** Validate + remember a workspace (URL or slug), then navigate into it. */
   addWorkspace: (urlOrSlug: string) => Promise<void>;
   projects: ProjectSummary[];
+  /** Primary selected project (first of the selection) — for single-project fallbacks. */
   currentProjectId: string | null;
   setCurrentProjectId: (id: string) => void;
   currentProject: ProjectSummary | null;
+  /** All selected projects. One = normal view; several = combined program view. */
+  selectedProjectIds: string[];
+  setSelectedProjectIds: (ids: string[]) => void;
+  /** True when more than one project is selected (combined view). */
+  isMulti: boolean;
   /** Filtered + recomputed view of the cached data, scoped to `windowDays`. */
   data: DashboardData | null;
   /** Original server-cached snapshot (full window). Useful for window picker bounds. */
@@ -57,7 +63,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [workspaces, setWorkspaces] = useState<string[] | null>(null);
-  const [currentProjectId, setCurrentProjectIdState] = useState<string | null>(null);
+  const [selectedProjectIds, setSelectedProjectIdsState] = useState<string[]>([]);
+  const currentProjectId = selectedProjectIds[0] ?? null;
+  const isMulti = selectedProjectIds.length > 1;
   const [rawData, setRawData] = useState<DashboardData | null>(null);
   const [history, setHistory] = useState<HistorySnapshot[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -70,10 +78,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const workspaceSlug = location.pathname.split('/').filter(Boolean)[0] || null;
   const activeValid = !!workspaceSlug && !!workspaces?.includes(workspaceSlug);
 
-  const setCurrentProjectId = useCallback((id: string) => {
-    setCurrentProjectIdState(id);
-    try { localStorage.setItem(STORAGE_KEYS.project, id); } catch { /* ignore */ }
+  const setSelectedProjectIds = useCallback((ids: string[]) => {
+    setSelectedProjectIdsState(ids);
+    try { localStorage.setItem(STORAGE_KEYS.project, JSON.stringify(ids)); } catch { /* ignore */ }
   }, []);
+  // Back-compat single-select setter.
+  const setCurrentProjectId = useCallback((id: string) => {
+    setSelectedProjectIds([id]);
+  }, [setSelectedProjectIds]);
 
   // Bootstrap: load the remembered workspaces list (the active one comes from the URL).
   useEffect(() => {
@@ -89,7 +101,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   // Load projects for the active workspace, then pick a project.
   useEffect(() => {
-    if (!activeValid || !workspaceSlug) { setProjects([]); setCurrentProjectIdState(null); return; }
+    if (!activeValid || !workspaceSlug) { setProjects([]); setSelectedProjectIdsState([]); return; }
     let cancelled = false;
     (async () => {
       setStatus('loading');
@@ -99,13 +111,26 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         const list = body.projects || [];
         setProjects(list);
-        const saved = (() => { try { return localStorage.getItem(STORAGE_KEYS.project); } catch { return null; } })();
-        let pick: string | null = null;
-        if (saved && list.some(p => p.id === saved)) pick = saved;
-        else if (body.default_project_id && list.some(p => p.id === body.default_project_id)) pick = body.default_project_id;
-        else if (list.length) pick = list[0].id;
-        setCurrentProjectIdState(pick);
-        if (!pick) setStatus('ready');
+        const valid = new Set(list.map(p => p.id));
+        // Restore a saved selection (JSON array, or a legacy single-id string).
+        const saved = (() => {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEYS.project);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+          } catch {
+            const raw = (() => { try { return localStorage.getItem(STORAGE_KEYS.project); } catch { return null; } })();
+            return raw ? [raw] : [];
+          }
+        })();
+        let pick = saved.filter(id => valid.has(id));
+        if (!pick.length) {
+          if (body.default_project_id && valid.has(body.default_project_id)) pick = [body.default_project_id];
+          else if (list.length) pick = [list[0].id];
+        }
+        setSelectedProjectIdsState(pick);
+        if (!pick.length) setStatus('ready');
       } catch (e) {
         if (!cancelled) { setErrorMsg((e as Error).message); setStatus('error'); }
       }
@@ -125,9 +150,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   //
   // Beyond that, refreshes from Plane only happen when the user clicks the
   // Refresh button (the `refresh` callback below).
+  const dataKey = selectedProjectIds.join(',');
   useEffect(() => {
-    if (!currentProjectId || !workspaceSlug) return;
-    const token = `${workspaceSlug}:${currentProjectId}`;
+    if (!dataKey || !workspaceSlug) return;
+    const ids = dataKey.split(',');
+    const token = `${workspaceSlug}:${dataKey}`;
     inflightId.current = token;
     (async () => {
       setStatus('loading');
@@ -135,22 +162,25 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setRawData(null);
       setHistory([]);
       try {
-        const d = await api.data(workspaceSlug, currentProjectId);
+        const d = await api.data(workspaceSlug, dataKey);
         if (inflightId.current !== token) return;
-        const h = await api.history(workspaceSlug, currentProjectId);
+        // Combined view has no single history series; only load history for one project.
+        const h = ids.length === 1 ? await api.history(workspaceSlug, ids[0]) : [];
         if (inflightId.current !== token) return;
         setRawData(d);
         setHistory(h);
         setStatus('ready');
       } catch {
-        // Cache miss — first encounter with this project. Pull from Plane.
+        // Cache miss — first encounter with these project(s). Pull each from Plane.
         setStatus('fetching');
         try {
-          await api.refresh(workspaceSlug, currentProjectId);
+          for (const id of ids) {
+            await api.refresh(workspaceSlug, id);
+            if (inflightId.current !== token) return;
+          }
+          const d = await api.data(workspaceSlug, dataKey);
           if (inflightId.current !== token) return;
-          const d = await api.data(workspaceSlug, currentProjectId);
-          if (inflightId.current !== token) return;
-          const h = await api.history(workspaceSlug, currentProjectId);
+          const h = ids.length === 1 ? await api.history(workspaceSlug, ids[0]) : [];
           if (inflightId.current !== token) return;
           setRawData(d);
           setHistory(h);
@@ -161,50 +191,55 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         }
       }
     })();
-  }, [currentProjectId, workspaceSlug]);
+  }, [dataKey, workspaceSlug]);
 
   const refresh = useCallback(async () => {
-    if (!currentProjectId || !workspaceSlug) return;
+    const ids = selectedProjectIds;
+    if (!ids.length || !workspaceSlug) return;
+    const key = ids.join(',');
     setRefreshing(true);
     try {
-      await api.refresh(workspaceSlug, currentProjectId);
-      const d = await api.data(workspaceSlug, currentProjectId);
-      const h = await api.history(workspaceSlug, currentProjectId);
+      for (const id of ids) {
+        await api.refresh(workspaceSlug, id);
+      }
+      const d = await api.data(workspaceSlug, key);
+      const h = ids.length === 1 ? await api.history(workspaceSlug, ids[0]) : [];
       setRawData(d);
       setHistory(h);
-      // Due-date history is computed in a background thread on the server and
-      // rewrites the data file when done. Poll until it finishes, then re-fetch
-      // so the reschedule pills appear without a manual reload.
-      void pollDueHistory(workspaceSlug, currentProjectId);
+      // Due-date history is computed in a background thread per project and rewrites
+      // the data file when done. Poll until all selected projects finish, then
+      // re-fetch so the reschedule pills appear without a manual reload.
+      void pollDueHistory(workspaceSlug, ids);
     } catch (e) {
       setErrorMsg((e as Error).message);
     } finally {
       setRefreshing(false);
     }
-  }, [currentProjectId, workspaceSlug]);
+  }, [selectedProjectIds, workspaceSlug]);
 
-  const pollDueHistory = useCallback(async (slug: string, projectId: string) => {
+  const pollDueHistory = useCallback(async (slug: string, ids: string[]) => {
     // The first due-history pass can take several minutes when Plane is throttling.
     // Poll for up to ~20 min; the server persists progress every few items, so we
     // re-fetch data periodically to let the reschedule pills trickle in, plus a
-    // final fetch once the pass reports done.
-    const stillViewing = () => slug === workspaceSlug && projectId === currentProjectId;
+    // final fetch once every selected project reports done.
+    const key = ids.join(',');
+    const stillViewing = () => slug === workspaceSlug && key === selectedProjectIds.join(',');
     for (let i = 0; i < 240; i++) {
       await new Promise(r => setTimeout(r, 5000));
-      let st: Awaited<ReturnType<typeof api.status>>;
-      try {
-        st = await api.status(slug, projectId);
-      } catch {
-        return;
+      let anyRunning = false;
+      for (const id of ids) {
+        try {
+          const st = await api.status(slug, id);
+          if (st.due_history_in_progress) anyRunning = true;
+        } catch { /* ignore a single status hiccup */ }
       }
-      const done = !st.due_history_in_progress;
       // Refresh visible data every ~20s while running so partial counts show up.
-      if (stillViewing() && (done || i % 4 === 3)) {
-        try { setRawData(await api.data(slug, projectId)); } catch { /* keep current */ }
+      if (stillViewing() && (!anyRunning || i % 4 === 3)) {
+        try { setRawData(await api.data(slug, key)); } catch { /* keep current */ }
       }
-      if (done) return;
+      if (!anyRunning) return;
     }
-  }, [workspaceSlug, currentProjectId]);
+  }, [workspaceSlug, selectedProjectIds]);
 
   const addWorkspace = useCallback(async (urlOrSlug: string) => {
     const res = await api.addWorkspace(urlOrSlug);
@@ -272,6 +307,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const value: DashboardContextValue = {
     status, errorMsg, workspaces, workspaceSlug, addWorkspace,
     projects, currentProjectId, setCurrentProjectId,
+    selectedProjectIds, setSelectedProjectIds, isMulti,
     currentProject, data, rawData, history, actions, refresh, refreshing,
     windowDays: effectiveWindow, setWindowDays, maxWindowDays,
   };

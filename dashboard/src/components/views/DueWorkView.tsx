@@ -197,6 +197,7 @@ function DueColumn({ title, subtitle, count, tone, children, empty, onDropItem, 
  */
 function QuickDueDate({ item, onSaved }: { item: WorkItem; onSaved?: (date: string) => void }) {
   const { currentProjectId, workspaceSlug } = useDashboard();
+  const projectId = item.project_id || currentProjectId;
   const inputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -211,11 +212,11 @@ function QuickDueDate({ item, onSaved }: { item: WorkItem; onSaved?: (date: stri
 
   const onChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const date = e.target.value;
-    if (!date || !currentProjectId) return;
+    if (!date || !projectId) return;
     setSaving(true);
     setErr(null);
     try {
-      await api.patchWorkItem(workspaceSlug!, currentProjectId, item.id, { target_date: date });
+      await api.patchWorkItem(workspaceSlug!, projectId, item.id, { target_date: date });
       // Optimistic update via parent override map; the caller will sync
       // from Plane when they're done editing (avoids per-PATCH refresh
       // which would hit the 60/min rate limit).
@@ -261,7 +262,9 @@ interface DueCardProps {
   onQuickDateSaved?: (itemId: string, date: string) => void;
 }
 function DueCard({ item, projIdent, meta, today, isMissing, onQuickDateSaved }: DueCardProps) {
-  const url = planeItemUrl(item.seq, { id: '', identifier: projIdent }, meta);
+  // In combined views each item carries its own project prefix; fall back to the active one.
+  const prefix = item.project_identifier || projIdent;
+  const url = planeItemUrl(item.seq, { id: '', identifier: prefix }, meta);
   const prio = PRIORITY_INFO[item.priority] || PRIORITY_INFO.none;
   const sinceUpdated = daysBetween(item.updated_at, today);
   const [dragging, setDragging] = useState(false);
@@ -278,7 +281,7 @@ function DueCard({ item, projIdent, meta, today, isMissing, onQuickDateSaved }: 
     >
       <div className="due-card-head">
         <span className={'badge ' + prioCls(item.priority)}>{prio.label}</span>
-        <a href={url} target="_blank" rel="noopener" className="due-card-seq">{projIdent}-{item.seq}</a>
+        <a href={url} target="_blank" rel="noopener" className="due-card-seq">{prefix}-{item.seq}</a>
         {isMissing
           ? <span className="ml-auto"><QuickDueDate item={item} onSaved={(date) => onQuickDateSaved?.(item.id, date)} /></span>
           : item.end
@@ -564,14 +567,15 @@ export function DueWorkView() {
   );
 
   const handleDrop = async (itemId: string, targetDate: string | null) => {
-    if (!currentProjectId) return;
     const current = itemsWithOverrides.find(i => i.id === itemId);
     if (!current) return;
+    const projectId = current.project_id || currentProjectId;
+    if (!projectId) return;
     // No-op if the drop wouldn't change anything.
     if ((current.end || null) === targetDate) return;
     setDropMsg(null);
     try {
-      await api.patchWorkItem(workspaceSlug!, currentProjectId, itemId, { target_date: targetDate });
+      await api.patchWorkItem(workspaceSlug!, projectId, itemId, { target_date: targetDate });
       // Apply optimistic override so the card relocates without a full
       // refresh (which would cost ~12 Plane API calls per drop and hit
       // the 60/min rate limit after a few drags).

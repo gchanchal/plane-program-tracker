@@ -77,7 +77,7 @@ export function ActionCenterView({ jumpKey }: { jumpKey: ActionBucketKey | null 
     if (q) {
       rows = rows.filter(it =>
         it.name.toLowerCase().includes(q) ||
-        `${projIdent}-${it.seq}`.toLowerCase().includes(q) ||
+        `${it.project_identifier || projIdent}-${it.seq}`.toLowerCase().includes(q) ||
         (it.assignee || '').toLowerCase().includes(q) ||
         (it.state || '').toLowerCase().includes(q) ||
         (it.priority || '').toLowerCase().includes(q) ||
@@ -314,13 +314,13 @@ export function ActionCenterView({ jumpKey }: { jumpKey: ActionBucketKey | null 
                   </div>
                   {filtered.slice(0, 50).map(it => {
                     const prio = PRIORITY_INFO[it.priority] || PRIORITY_INFO.none;
-                    const url = planeItemUrl(it.seq, currentProject, data._meta);
+                    const url = planeItemUrl(it.seq, { id: '', identifier: it.project_identifier || projIdent }, data._meta);
                     const isFixOpen = fix?.bucket === key && fix?.itemId === it.id;
                     return (
                       <div key={it.id}>
                         <div className={'action-row' + (isFixOpen ? ' with-fix-open' : '')}>
                           <span className={'badge ' + prioCls(it.priority)}>{prio.label}</span>
-                          <a className="action-seq" href={url} target="_blank" rel="noopener">{projIdent}-{it.seq}</a>
+                          <a className="action-seq" href={url} target="_blank" rel="noopener">{it.project_identifier || projIdent}-{it.seq}</a>
                           <span className="action-name"><a href={url} target="_blank" rel="noopener">{it.name}</a></span>
                           <span className="action-meta">
                             {it.assignee || <em style={{ color: 'var(--muted-foreground)' }}>unassigned</em>} · {it.state}

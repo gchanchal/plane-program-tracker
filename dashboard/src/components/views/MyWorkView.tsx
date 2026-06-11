@@ -289,11 +289,11 @@ function UserBucketList({
         <div className="action-bucket-list">
           {items.slice(0, 50).map(item => {
             const prio = PRIORITY_INFO[item.priority] || PRIORITY_INFO.none;
-            const url = planeItemUrl(item.seq, { id: '', identifier: projIdent }, meta);
+            const url = planeItemUrl(item.seq, { id: '', identifier: item.project_identifier || projIdent }, meta);
             return (
               <div key={item.id} className="action-row" style={{ display: 'grid', gridTemplateColumns: '90px 1fr auto auto auto auto auto', gap: 12, alignItems: 'center', padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 12.5 }}>
                 <a href={url} target="_blank" rel="noopener" className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  {projIdent}-{item.seq}
+                  {item.project_identifier || projIdent}-{item.seq}
                   <ExternalLink className="h-3 w-3" />
                 </a>
                 <span className="truncate">{item.name}</span>
