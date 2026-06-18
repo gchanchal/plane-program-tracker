@@ -22,4 +22,4 @@ spec:
   pollingInterval: 1m0s
   correctDrift: {}
   targets:
-    - clusterName: c-vg5tc
+    - clusterName: local
