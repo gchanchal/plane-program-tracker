@@ -10,7 +10,7 @@ spec:
     - websecure
   routes:
     - kind: Rule
-      match: Host(`plane-tracker.plane.town`) && PathPrefix(`/`)
+      match: Host(`plane-tracker.plane.tools`) && PathPrefix(`/`)
       services:
         - name: plane-tracker
           port: 80
