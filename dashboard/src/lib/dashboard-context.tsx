@@ -45,6 +45,10 @@ interface DashboardContextValue {
   actions: ActionBuckets | null;
   refresh: () => Promise<void>;
   refreshing: boolean;
+  /** Re-fetch the selected project(s) from Plane over a wider window (days) and
+   *  display it. Used by the day-picker for 1–2 year pulls beyond the cache. */
+  fetchWindow: (days: number) => Promise<void>;
+  fetchingWindow: boolean;
   /** Active display window. Capped at the server-cached window. */
   windowDays: number;
   setWindowDays: (n: number) => void;
@@ -71,6 +75,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [rawData, setRawData] = useState<DashboardData | null>(null);
   const [history, setHistory] = useState<HistorySnapshot[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [fetchingWindow, setFetchingWindow] = useState(false);
   const [windowDays, setWindowDays] = useState<number>(0); // 0 = use server max
   const inflightId = useRef<string | null>(null);
 
@@ -250,6 +255,30 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
   }, [selectedProjectIds, workspaceSlug]);
 
+  const fetchWindow = useCallback(async (days: number) => {
+    const ids = selectedProjectIds;
+    if (!ids.length || !workspaceSlug || days <= 0) return;
+    const key = ids.join(',');
+    setFetchingWindow(true);
+    try {
+      // Widen each selected project's cache to `days` (a full pull server-side),
+      // then reload and show it. Due-date history re-computes in the background.
+      for (const id of ids) {
+        await api.refresh(workspaceSlug, id, days);
+      }
+      const d = await api.data(workspaceSlug, key);
+      const h = ids.length === 1 ? await api.history(workspaceSlug, ids[0]) : [];
+      setRawData(d);
+      setHistory(h);
+      setWindowDays(days);
+      void pollDueHistory(workspaceSlug, ids);
+    } catch (e) {
+      setErrorMsg((e as Error).message);
+    } finally {
+      setFetchingWindow(false);
+    }
+  }, [selectedProjectIds, workspaceSlug]);
+
   const pollDueHistory = useCallback(async (slug: string, ids: string[]) => {
     // The first due-history pass can take several minutes when Plane is throttling.
     // Poll for up to ~20 min; the server persists progress every few items, so we
@@ -342,6 +371,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     projects, currentProjectId, setCurrentProjectId,
     selectedProjectIds, setSelectedProjectIds, isMulti, selectedProjectParam,
     currentProject, data, rawData, history, actions, refresh, refreshing,
+    fetchWindow, fetchingWindow,
     windowDays: effectiveWindow, setWindowDays, maxWindowDays,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

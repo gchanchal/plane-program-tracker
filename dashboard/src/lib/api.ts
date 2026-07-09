@@ -38,8 +38,9 @@ export const api = {
     }
   },
 
-  refresh(workspace: string, projectId: string): Promise<unknown> {
-    return jsonFetch(`/api/refresh?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}`, { method: 'POST' });
+  refresh(workspace: string, projectId: string, windowDays?: number): Promise<unknown> {
+    const wd = windowDays && windowDays > 0 ? `&window_days=${windowDays}` : '';
+    return jsonFetch(`/api/refresh?${ws(workspace)}&project_id=${encodeURIComponent(projectId)}${wd}`, { method: 'POST' });
   },
 
   /** Refresh state, incl. background due-date-history progress (due_history_*). */
