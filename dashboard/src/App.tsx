@@ -12,6 +12,7 @@ import { ActionCenterView } from '@/components/views/ActionCenterView';
 import { DueWorkView } from '@/components/views/DueWorkView';
 import { CapacityView } from '@/components/views/CapacityView';
 import { FlowView } from '@/components/views/FlowView';
+import { ReportsView } from '@/components/views/ReportsView';
 import { ExplorerView } from '@/components/views/ExplorerView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { RoadmapTimeline } from '@/components/RoadmapTimeline';
@@ -215,6 +216,7 @@ function Inner() {
       case 'due':      return <DueWorkView />;
       case 'capacity': return <CapacityView />;
       case 'flow':     return <FlowView />;
+      case 'reports':  return <ReportsView />;
       case 'explorer': return <ExplorerView />;
     }
   };

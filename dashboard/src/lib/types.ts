@@ -30,6 +30,8 @@ export interface WorkItem {
   end?: string;
   created_at?: string;
   updated_at?: string;
+  /** Owning Plane cycle (sprint), if the work item is assigned to one. */
+  cycle_id?: string;
   labels?: WorkItemLabel[];
   description_html?: string;
   description_stripped?: string;
@@ -81,6 +83,13 @@ export interface StateRecord {
   id: string;
   name: string;
   group: StateGroup;
+}
+
+export interface Cycle {
+  id: string;
+  name: string;
+  start_date?: string | null;
+  end_date?: string | null;
 }
 
 export interface WorkItemComment {
@@ -145,6 +154,7 @@ export interface DashboardData {
   state_group_info: Record<StateGroup, StateGroupInfo>;
   states_list?: StateRecord[];
   labels_list?: WorkItemLabel[];
+  cycles?: Cycle[];
   weeks: Array<{ week: string; count: number }>;
   portfolios?: Portfolio[];
   kpi: { total: number };
