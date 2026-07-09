@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
-import { ChevronDown, Check } from 'lucide-react';
+import { ChevronDown, Check, Download } from 'lucide-react';
 import { DashboardProvider, useDashboard } from '@/lib/dashboard-context';
 import { DEFAULT_TAB, segmentForKey, keyForSegment, tabUrl, type TabKey } from '@/lib/tabs';
 import { STORAGE_KEYS } from '@/lib/constants';
@@ -19,15 +19,24 @@ import { RoadmapTimeline } from '@/components/RoadmapTimeline';
 import type { ActionBucketKey } from '@/lib/types';
 import './styles/dashboard.css';
 
+function windowLabel(n: number): string {
+  if (n % 365 === 0) return `${n / 365} year${n / 365 > 1 ? 's' : ''}`;
+  if (n === 183) return '6 months';
+  if (n % 30 === 0 && n >= 60) return `${n / 30} months`;
+  return `${n} days`;
+}
+
 function WindowPicker() {
-  const { windowDays, setWindowDays, maxWindowDays } = useDashboard();
+  const { windowDays, setWindowDays, maxWindowDays, fetchWindow, fetchingWindow } = useDashboard();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLSpanElement>(null);
 
-  // Build options up to (and including) the server's cached max window.
-  const PRESETS = [7, 14, 30, 60, 90, 183, 365];
-  const options = PRESETS.filter(n => n <= maxWindowDays);
-  if (!options.includes(maxWindowDays)) options.push(maxWindowDays);
+  const PRESETS = [7, 14, 30, 60, 90, 183, 365, 730];
+  // Within the cached window → instant client-side filter.
+  const displayOpts = PRESETS.filter(n => n <= maxWindowDays);
+  if (!displayOpts.includes(maxWindowDays)) displayOpts.push(maxWindowDays);
+  // Beyond the cache → must be fetched from Plane (a fuller pull).
+  const fetchOpts = PRESETS.filter(n => n > maxWindowDays);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -45,14 +54,14 @@ function WindowPicker() {
         className="inline-flex items-center gap-1 px-1.5 py-0.5 -mx-1 rounded border border-transparent hover:border-border hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
         title="Change time window"
       >
-        last {windowDays} days
+        {fetchingWindow ? 'fetching…' : `last ${windowLabel(windowDays)}`}
         <ChevronDown className="h-3 w-3" />
       </button>
       {open && (
-        <div className="absolute z-30 left-0 top-full mt-1 min-w-[160px] bg-card border border-border rounded-md shadow-lg p-1">
-          {options.map(n => {
+        <div className="absolute z-30 left-0 top-full mt-1 min-w-[190px] bg-card border border-border rounded-md shadow-lg p-1">
+          {displayOpts.map(n => {
             const isActive = n === windowDays;
-            const label = n === maxWindowDays ? `${n} days (full window)` : `${n} days`;
+            const label = n === maxWindowDays ? `${windowLabel(n)} (full cache)` : windowLabel(n);
             return (
               <button
                 key={n}
@@ -65,8 +74,27 @@ function WindowPicker() {
               </button>
             );
           })}
+          {fetchOpts.length > 0 && (
+            <>
+              <div className="px-2 pt-2 pb-1 mt-1 border-t border-border text-[10.5px] uppercase tracking-wide text-muted-foreground">
+                Fetch more from Plane
+              </div>
+              {fetchOpts.map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={fetchingWindow}
+                  onClick={() => { setOpen(false); void fetchWindow(n); }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left text-foreground hover:bg-accent disabled:opacity-50"
+                >
+                  <Download className="h-3.5 w-3.5 opacity-70" />
+                  {windowLabel(n)}
+                </button>
+              ))}
+            </>
+          )}
           <div className="px-2 py-1 mt-1 border-t border-border text-[10.5px] text-muted-foreground">
-            Server cache: {maxWindowDays} days
+            Cached: {windowLabel(maxWindowDays)}{fetchingWindow ? ' · fetching…' : ''}
           </div>
         </div>
       )}

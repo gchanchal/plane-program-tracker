@@ -848,10 +848,10 @@ def start_due_history_enrichment(data: dict, project_id: str, slug: str, api_key
     threading.Thread(target=_run, name=f'due-history-{project_id[:8]}', daemon=True).start()
 
 
-def aggregate(items, users, states=None, types=None, labels=None, cycles=None):
+def aggregate(items, users, states=None, types=None, labels=None, cycles=None, window_days=None):
     """Transform raw Plane items into the dashboard data shape."""
     today = datetime.now(timezone.utc).date()
-    cutoff = (today - timedelta(days=WINDOW_DAYS)).isoformat()
+    cutoff = (today - timedelta(days=window_days or WINDOW_DAYS)).isoformat()
 
     user_colors = {uid: PALETTE[i % len(PALETTE)] for i, uid in enumerate(sorted(users.keys()))}
     labels = labels or {}
@@ -1022,7 +1022,7 @@ def _load_raw_cache(project_id: str, slug: str):
     return cached
 
 
-def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = None):
+def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = None, window_days: int = None):
     """Re-fetch + write data/<slug>/<project_id>.json. Returns updated data.
 
     Incremental by default: if a raw cache exists, fetch only items updated since
@@ -1052,9 +1052,15 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
     except Exception:
         pass
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)).date().isoformat()
+    wd = window_days or WINDOW_DAYS
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=wd)).date().isoformat()
+    # Scale the page budget with the window so long (1–2 year) pulls aren't truncated.
+    max_pages = max(30, min(300, round(30 * wd / WINDOW_DAYS)))
     prev_raw = _load_raw_cache(project_id, slug)
-    if prev_raw:
+    # A delta refresh only re-fetches recently-changed items, so it can't backfill
+    # older history. An explicit window request (e.g. fetch 1–2 years) must do a
+    # full pull to widen the cache; the default (no window_days) stays incremental.
+    if prev_raw and not window_days:
         since = prev_raw['last_refreshed_at']
         print(f'  Delta refresh: fetching items updated since {since}...', file=sys.stderr)
         delta = fetch_work_items_updated_since(project_id, slug, since, api_key=api_key, state=state)
@@ -1065,8 +1071,8 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
         mode = 'delta'
         print(f'  Delta: {len(delta)} changed; {len(items)} items in window.', file=sys.stderr)
     else:
-        print(f'  Full refresh: fetching work items (last {WINDOW_DAYS} days)...', file=sys.stderr)
-        items = fetch_work_items(project_id, slug, api_key=api_key, state=state)
+        print(f'  Full refresh: fetching work items (last {wd} days)...', file=sys.stderr)
+        items = fetch_work_items(project_id, slug, window_days=wd, max_pages=max_pages, api_key=api_key, state=state)
         mode = 'full'
         print(f'  Full: {len(items)} items in window.', file=sys.stderr)
 
@@ -1075,14 +1081,14 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
         {'items': items, 'last_refreshed_at': started_at,
          'project_id': project_id, 'workspace_slug': slug}, default=str))
 
-    data = aggregate(items, users, states, types, labels, cycles)
+    data = aggregate(items, users, states, types, labels, cycles, window_days=wd)
     # Carry over any previously-computed due-date history so the pills don't blink
     # off between the fast write below and the background re-enrichment completing.
     _carry_due_date_history(data, project_id, slug)
     data['_meta'] = {
         'last_refreshed_at': started_at,
         'item_count': len(items),
-        'window_days': WINDOW_DAYS,
+        'window_days': wd,
         'project_id': project_id,
         'project_identifier': proj_identifier,
         'project_name': proj_name,
@@ -1835,6 +1841,13 @@ class Handler(BaseHTTPRequestHandler):
             if not pid:
                 self._send_json({'error': 'project_id is required'}, 400)
                 return
+            # Optional ?window_days= widens the fetch (e.g. 365/730 for 1–2 years).
+            qs = urllib.parse.parse_qs(parsed.query)
+            try:
+                req_wd = int((qs.get('window_days') or ['0'])[0])
+            except ValueError:
+                req_wd = 0
+            wd_arg = min(req_wd, 1100) if req_wd > 0 else None
             st = refresh_state_for(slug, pid)
             if st['in_progress']:
                 self._send_json({'error': 'refresh already in progress', 'state': st}, 409)
@@ -1844,7 +1857,7 @@ class Handler(BaseHTTPRequestHandler):
                 st['last_error'] = None
                 st['pages_fetched'] = 0
                 try:
-                    data = do_refresh(pid, slug, api_key=api_key, state=st)
+                    data = do_refresh(pid, slug, api_key=api_key, state=st, window_days=wd_arg)
                     st['last_run'] = data['_meta']['last_refreshed_at']
                     self._send_json({'ok': True, 'meta': data['_meta']})
                 except Exception as e:
