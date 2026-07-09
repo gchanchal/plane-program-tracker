@@ -53,8 +53,14 @@ jobs:
 
       - name: Install kustomize
         run: |
-          curl -sSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          # Pinned direct download — the upstream install_kustomize.sh (master)
+          # has been flaky, leaving no tarball for tar to open. -f makes curl
+          # fail on any HTTP error instead of saving an error page.
+          KUSTOMIZE_VERSION=5.5.0
+          curl -sSLf "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" -o kustomize.tar.gz
+          tar -xzf kustomize.tar.gz
           sudo mv kustomize /usr/local/bin/
+          kustomize version
 
       - name: Bump image tag in prod overlay
         env:
