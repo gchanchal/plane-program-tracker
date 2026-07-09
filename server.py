@@ -604,6 +604,28 @@ def fetch_labels(project_id: str, slug: str, api_key: str = None):
         return {}
 
 
+def fetch_cycles(project_id: str, slug: str, api_key: str = None):
+    """Fetch project cycles; returns {cycle_id: {name, start_date, end_date}}."""
+    try:
+        path = f'workspaces/{slug}/projects/{project_id}/cycles/'
+        result = plane_get(path, api_key=api_key)
+        items = result if isinstance(result, list) else result.get('results') or []
+        out = {}
+        for c in items:
+            cid = c.get('id')
+            if not cid:
+                continue
+            out[cid] = {
+                'name': c.get('name', '') or 'Unnamed cycle',
+                'start_date': c.get('start_date'),
+                'end_date': c.get('end_date'),
+            }
+        return out
+    except Exception as e:
+        print(f'  ! could not load cycles for {project_id} ({e}).', file=sys.stderr)
+        return {}
+
+
 def _looks_like_id(s):
     """True if string looks like a raw UUID (with or without dashes) or '<uuid>-intake'."""
     if not s or not isinstance(s, str):
@@ -826,7 +848,7 @@ def start_due_history_enrichment(data: dict, project_id: str, slug: str, api_key
     threading.Thread(target=_run, name=f'due-history-{project_id[:8]}', daemon=True).start()
 
 
-def aggregate(items, users, states=None, types=None, labels=None):
+def aggregate(items, users, states=None, types=None, labels=None, cycles=None):
     """Transform raw Plane items into the dashboard data shape."""
     today = datetime.now(timezone.utc).date()
     cutoff = (today - timedelta(days=WINDOW_DAYS)).isoformat()
@@ -901,6 +923,7 @@ def aggregate(items, users, states=None, types=None, labels=None):
             'end': i.get('target_date'),
             'created_at': i.get('created_at'),
             'updated_at': i.get('updated_at'),
+            'cycle_id': i.get('cycle_id'),
             'labels': expand_labels(i.get('labels')),
             'description_html': i.get('description_html') or '',
             'description_stripped': i.get('description_stripped') or '',
@@ -965,6 +988,7 @@ def aggregate(items, users, states=None, types=None, labels=None):
 
     states_list = [{'id': sid, **info} for sid, info in (states or {}).items()] if states else []
     labels_list = [{'id': lid, **info} for lid, info in (labels or {}).items()]
+    cycles_list = [{'id': cid, **info} for cid, info in (cycles or {}).items()]
     return {
         'items': slim,
         'kpi': {'total': total, 'pct_done': pct_done, 'done': done, 'in_progress': in_progress,
@@ -981,6 +1005,7 @@ def aggregate(items, users, states=None, types=None, labels=None):
         'user_colors': user_colors,
         'states_list': states_list,
         'labels_list': labels_list,
+        'cycles': cycles_list,
     }
 
 
@@ -1014,7 +1039,8 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
     states = fetch_states(project_id, slug, api_key=api_key)
     types = fetch_types(project_id, slug, api_key=api_key)
     labels = fetch_labels(project_id, slug, api_key=api_key)
-    print(f'  Got {len(states)} states, {len(types)} work item types, {len(labels)} labels.', file=sys.stderr)
+    cycles = fetch_cycles(project_id, slug, api_key=api_key)
+    print(f'  Got {len(states)} states, {len(types)} work item types, {len(labels)} labels, {len(cycles)} cycles.', file=sys.stderr)
     # Resolve this project's identifier + name once, stored in _meta so the
     # multi-project merge can tag items without any per-load API call.
     proj_identifier, proj_name = None, None
@@ -1049,7 +1075,7 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
         {'items': items, 'last_refreshed_at': started_at,
          'project_id': project_id, 'workspace_slug': slug}, default=str))
 
-    data = aggregate(items, users, states, types, labels)
+    data = aggregate(items, users, states, types, labels, cycles)
     # Carry over any previously-computed due-date history so the pills don't blink
     # off between the fast write below and the background re-enrichment completing.
     _carry_due_date_history(data, project_id, slug)

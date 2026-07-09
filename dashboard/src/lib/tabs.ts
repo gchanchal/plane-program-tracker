@@ -1,9 +1,9 @@
-import { Activity, UserCircle2, CheckSquare, CalendarClock, Users, TrendingUp, ListTree, Map as MapIcon } from 'lucide-react';
+import { Activity, UserCircle2, CheckSquare, CalendarClock, Users, TrendingUp, ListTree, Map as MapIcon, BarChart3 } from 'lucide-react';
 
 // Central tab registry. Each tab maps to a URL path and renders a view component
 // that lives in its own file under components/views (or RoadmapTimeline). Both the
 // nav (Tabs) and the router (App) read from here so paths and labels stay in sync.
-export type TabKey = 'pulse' | 'roadmap' | 'mywork' | 'action' | 'due' | 'capacity' | 'flow' | 'explorer';
+export type TabKey = 'pulse' | 'roadmap' | 'mywork' | 'action' | 'due' | 'capacity' | 'flow' | 'reports' | 'explorer';
 
 export interface TabDef {
   key: TabKey;
@@ -21,6 +21,7 @@ export const TABS: TabDef[] = [
   { key: 'due',      segment: 'due-work',      label: 'Due Work',      Icon: CalendarClock },
   { key: 'capacity', segment: 'capacity',      label: 'Capacity',      Icon: Users },
   { key: 'flow',     segment: 'flow',          label: 'Flow',          Icon: TrendingUp },
+  { key: 'reports',  segment: 'reports',       label: 'Reports',       Icon: BarChart3 },
   { key: 'explorer', segment: 'explorer',      label: 'Explorer',      Icon: ListTree },
 ];
 
