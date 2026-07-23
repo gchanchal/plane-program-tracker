@@ -196,7 +196,7 @@ def merge_dashboards(datas: list) -> dict:
     group_counts, priority_counts, type_counts = Counter(), Counter(), Counter()
     weeks = defaultdict(int)
     users, user_colors = {}, {}
-    states, labels = {}, {}
+    states, labels, modules = {}, {}, {}
     portfolios = []
     today, cutoff, state_group_info = '', '', None
     project_ids = []
@@ -228,6 +228,8 @@ def merge_dashboards(datas: list) -> dict:
             states[s.get('id')] = s
         for l in (d.get('labels_list') or []):
             labels[l.get('id')] = l
+        for m in (d.get('modules') or []):
+            modules[m.get('id')] = m
         for pf in (d.get('portfolios') or []):
             pf = dict(pf)
             pf.setdefault('project_id', pid)
@@ -258,6 +260,7 @@ def merge_dashboards(datas: list) -> dict:
         'user_colors': user_colors,
         'states_list': list(states.values()),
         'labels_list': list(labels.values()),
+        'modules': list(modules.values()),
         '_meta': {
             'multi': True,
             'project_ids': project_ids,
@@ -626,6 +629,44 @@ def fetch_cycles(project_id: str, slug: str, api_key: str = None):
         return {}
 
 
+def fetch_modules(project_id: str, slug: str, api_key: str = None):
+    """Fetch project modules + membership.
+
+    Unlike cycles (a single FK on the work item), modules are a many-to-many
+    relationship, so membership is pulled per-module from the module-issues
+    endpoint. Returns (meta, item_modules):
+      meta:         {module_id: {name}}
+      item_modules: {issue_id: [module_id, ...]}
+    """
+    meta, item_modules = {}, {}
+    try:
+        path = f'workspaces/{slug}/projects/{project_id}/modules/'
+        result = plane_get(path, api_key=api_key)
+        mods = result if isinstance(result, list) else result.get('results') or []
+    except Exception as e:
+        print(f'  ! could not load modules for {project_id} ({e}).', file=sys.stderr)
+        return meta, item_modules
+    for m in mods:
+        mid = m.get('id')
+        if not mid:
+            continue
+        meta[mid] = {'name': m.get('name', '') or 'Unnamed module'}
+        try:
+            mpath = f'workspaces/{slug}/projects/{project_id}/modules/{mid}/module-issues/'
+            mres = plane_get(mpath, api_key=api_key)
+            rows = mres if isinstance(mres, list) else mres.get('results') or []
+        except Exception as e:
+            print(f'  ! could not load issues for module {mid} ({e}).', file=sys.stderr)
+            continue
+        for r in rows:
+            # A module-issues row exposes the issue id as `issue` (M2M through-row);
+            # some API versions inline the full issue object instead, so fall back to `id`.
+            iid = r.get('issue') or (r.get('issue_detail') or {}).get('id') or r.get('id')
+            if iid:
+                item_modules.setdefault(iid, []).append(mid)
+    return meta, item_modules
+
+
 def _looks_like_id(s):
     """True if string looks like a raw UUID (with or without dashes) or '<uuid>-intake'."""
     if not s or not isinstance(s, str):
@@ -848,7 +889,8 @@ def start_due_history_enrichment(data: dict, project_id: str, slug: str, api_key
     threading.Thread(target=_run, name=f'due-history-{project_id[:8]}', daemon=True).start()
 
 
-def aggregate(items, users, states=None, types=None, labels=None, cycles=None, window_days=None):
+def aggregate(items, users, states=None, types=None, labels=None, cycles=None,
+              modules=None, item_modules=None, window_days=None):
     """Transform raw Plane items into the dashboard data shape."""
     today = datetime.now(timezone.utc).date()
     cutoff = (today - timedelta(days=window_days or WINDOW_DAYS)).isoformat()
@@ -924,6 +966,7 @@ def aggregate(items, users, states=None, types=None, labels=None, cycles=None, w
             'created_at': i.get('created_at'),
             'updated_at': i.get('updated_at'),
             'cycle_id': i.get('cycle_id'),
+            'module_ids': (item_modules or {}).get(i['id'], []),
             'labels': expand_labels(i.get('labels')),
             'description_html': i.get('description_html') or '',
             'description_stripped': i.get('description_stripped') or '',
@@ -989,6 +1032,7 @@ def aggregate(items, users, states=None, types=None, labels=None, cycles=None, w
     states_list = [{'id': sid, **info} for sid, info in (states or {}).items()] if states else []
     labels_list = [{'id': lid, **info} for lid, info in (labels or {}).items()]
     cycles_list = [{'id': cid, **info} for cid, info in (cycles or {}).items()]
+    modules_list = [{'id': mid, **info} for mid, info in (modules or {}).items()]
     return {
         'items': slim,
         'kpi': {'total': total, 'pct_done': pct_done, 'done': done, 'in_progress': in_progress,
@@ -1006,6 +1050,7 @@ def aggregate(items, users, states=None, types=None, labels=None, cycles=None, w
         'states_list': states_list,
         'labels_list': labels_list,
         'cycles': cycles_list,
+        'modules': modules_list,
     }
 
 
@@ -1040,7 +1085,8 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
     types = fetch_types(project_id, slug, api_key=api_key)
     labels = fetch_labels(project_id, slug, api_key=api_key)
     cycles = fetch_cycles(project_id, slug, api_key=api_key)
-    print(f'  Got {len(states)} states, {len(types)} work item types, {len(labels)} labels, {len(cycles)} cycles.', file=sys.stderr)
+    modules, item_modules = fetch_modules(project_id, slug, api_key=api_key)
+    print(f'  Got {len(states)} states, {len(types)} work item types, {len(labels)} labels, {len(cycles)} cycles, {len(modules)} modules.', file=sys.stderr)
     # Resolve this project's identifier + name once, stored in _meta so the
     # multi-project merge can tag items without any per-load API call.
     proj_identifier, proj_name = None, None
@@ -1081,7 +1127,8 @@ def do_refresh(project_id: str, slug: str, api_key: str = None, state: dict = No
         {'items': items, 'last_refreshed_at': started_at,
          'project_id': project_id, 'workspace_slug': slug}, default=str))
 
-    data = aggregate(items, users, states, types, labels, cycles, window_days=wd)
+    data = aggregate(items, users, states, types, labels, cycles,
+                     modules=modules, item_modules=item_modules, window_days=wd)
     # Carry over any previously-computed due-date history so the pills don't blink
     # off between the fast write below and the background re-enrichment completing.
     _carry_due_date_history(data, project_id, slug)

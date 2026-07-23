@@ -21,7 +21,7 @@ import { daysBetween, fmtShortDate, planeItemUrl, prioCls, projectPrefix } from 
 import { EditWorkItem } from '@/components/EditWorkItem';
 import { DueChangesPill } from '@/components/DueChangesPill';
 import { MultiSelectChip, type MultiSelectOption } from '@/components/MultiSelectChip';
-import type { Priority, WorkItem } from '@/lib/types';
+import type { Module, Priority, WorkItem } from '@/lib/types';
 
 interface Filters {
   state: Set<string>;
@@ -29,6 +29,7 @@ interface Filters {
   type: Set<string>;
   assignee: Set<string>;
   label: Set<string>;
+  module: Set<string>;
 }
 
 const EMPTY_FILTERS: Filters = {
@@ -37,6 +38,7 @@ const EMPTY_FILTERS: Filters = {
   type: new Set(),
   assignee: new Set(),
   label: new Set(),
+  module: new Set(),
 };
 
 function applyFilters(items: WorkItem[], f: Filters): WorkItem[] {
@@ -56,17 +58,28 @@ function applyFilters(items: WorkItem[], f: Filters): WorkItem[] {
         return false;
       }
     }
+    if (f.module.size) {
+      const ids = i.module_ids || [];
+      if (ids.length === 0) {
+        if (!f.module.has('__nomodule__')) return false;
+      } else if (!ids.some(id => f.module.has(id))) {
+        return false;
+      }
+    }
     return true;
   });
 }
 
-function buildOptions(items: WorkItem[]) {
+function buildOptions(items: WorkItem[], modules: Module[] = []) {
   const state = new Map<string, number>();
   const prio = new Map<Priority, number>();
   const type = new Map<string, number>();
   const assignee = new Map<string, { label: string; color?: string; count: number }>();
   const label = new Map<string, { label: string; color?: string; count: number }>();
   let noLabelCount = 0;
+  const moduleNames = new Map(modules.map(m => [m.id, m.name]));
+  const moduleCounts = new Map<string, number>();
+  let noModuleCount = 0;
 
   for (const i of items) {
     state.set(i.state, (state.get(i.state) || 0) + 1);
@@ -84,6 +97,13 @@ function buildOptions(items: WorkItem[]) {
         const e = label.get(l.id);
         if (e) e.count += 1;
         else label.set(l.id, { label: l.name, color: l.color, count: 1 });
+      }
+    }
+    if (!i.module_ids || i.module_ids.length === 0) {
+      noModuleCount += 1;
+    } else {
+      for (const mid of i.module_ids) {
+        moduleCounts.set(mid, (moduleCounts.get(mid) || 0) + 1);
       }
     }
   }
@@ -121,7 +141,14 @@ function buildOptions(items: WorkItem[]) {
     labelOpts.push({ value: '__nolabel__', label: 'No labels', count: noLabelCount });
   }
 
-  return { stateOpts, prioOpts, typeOpts, assigneeOpts, labelOpts };
+  const moduleOpts: MultiSelectOption[] = Array.from(moduleCounts.entries())
+    .map(([id, count]) => ({ value: id, label: moduleNames.get(id) || 'Unknown module', count }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  if (noModuleCount > 0) {
+    moduleOpts.push({ value: '__nomodule__', label: 'No module', count: noModuleCount });
+  }
+
+  return { stateOpts, prioOpts, typeOpts, assigneeOpts, labelOpts, moduleOpts };
 }
 
 const fmtRange = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -436,7 +463,7 @@ export function DueWorkView() {
 
   // Options are built from the *unfiltered* item set so the user can still
   // see and toggle facets that the current filter would otherwise hide.
-  const options = useMemo(() => (data ? buildOptions(data.items) : null), [data]);
+  const options = useMemo(() => (data ? buildOptions(data.items, data.modules) : null), [data]);
 
   const itemsWithOverrides = useMemo(() => {
     if (!data) return [];
@@ -461,7 +488,7 @@ export function DueWorkView() {
   }, [itemsWithOverrides, filters, search, currentProject]);
 
   const activeFilterCount =
-    filters.state.size + filters.priority.size + filters.type.size + filters.assignee.size + filters.label.size;
+    filters.state.size + filters.priority.size + filters.type.size + filters.assignee.size + filters.label.size + filters.module.size;
 
   const buckets = useMemo(() => {
     if (!data) return null;
@@ -662,6 +689,13 @@ export function DueWorkView() {
             options={options.labelOpts}
             selected={filters.label}
             onChange={s => setFilters(f => ({ ...f, label: s }))}
+            hideWhenEmpty
+          />
+          <MultiSelectChip
+            label="Module"
+            options={options.moduleOpts}
+            selected={filters.module}
+            onChange={s => setFilters(f => ({ ...f, module: s }))}
             hideWhenEmpty
           />
           <span className="ml-auto text-xs text-muted-foreground whitespace-nowrap">
