@@ -32,6 +32,8 @@ export interface WorkItem {
   updated_at?: string;
   /** Owning Plane cycle (sprint), if the work item is assigned to one. */
   cycle_id?: string;
+  /** Plane modules this work item belongs to (many-to-many). */
+  module_ids?: string[];
   labels?: WorkItemLabel[];
   description_html?: string;
   description_stripped?: string;
@@ -90,6 +92,11 @@ export interface Cycle {
   name: string;
   start_date?: string | null;
   end_date?: string | null;
+}
+
+export interface Module {
+  id: string;
+  name: string;
 }
 
 export interface WorkItemComment {
@@ -155,6 +162,7 @@ export interface DashboardData {
   states_list?: StateRecord[];
   labels_list?: WorkItemLabel[];
   cycles?: Cycle[];
+  modules?: Module[];
   weeks: Array<{ week: string; count: number }>;
   portfolios?: Portfolio[];
   kpi: { total: number };
