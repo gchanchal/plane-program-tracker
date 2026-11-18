@@ -6,6 +6,10 @@ kind: IngressRoute
 metadata:
   name: plane-tracker
 spec:
+  # Public: traefik-external (the public load balancer) serves only routes of
+  # class `traefik` (terraform-scripts traefik_public_ingress_class). Without it,
+  # only the internal load balancer would serve plane-tracker.plane.tools.
+  ingressClassName: traefik
   entryPoints:
     - websecure
   routes:
